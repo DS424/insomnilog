@@ -1,0 +1,15 @@
+# Rust
+/target/
+
+# IDEs and Tooling
+.vscode/*
+.spr.yml
+.claude/
+
+# GitHub / OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

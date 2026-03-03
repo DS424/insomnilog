@@ -1,0 +1,17 @@
+[package]
+name = "insomnilog-examples"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Examples for the logging library insomnilog"
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+insomnilog = { path = "../insomnilog" }

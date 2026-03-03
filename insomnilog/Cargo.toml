@@ -1,0 +1,15 @@
+[package]
+name = "insomnilog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "An asynchronous Rust logging library that never blocks"
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["async", "logging", "log", "non-blocking"]
+categories = ["development-tools::debugging"]
+
+[lints]
+workspace = true
