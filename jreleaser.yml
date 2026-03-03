@@ -1,0 +1,38 @@
+release:
+  generic:
+    owner: DS424
+    changelog:
+      sort: ASC
+      formatted: ALWAYS
+      preset: conventional-commits
+      format: "- {{commitShortHash}} {{#commitIsConventional}}{{#conventionalCommitIsBreakingChange}}🚨 {{/conventionalCommitIsBreakingChange}}{{#conventionalCommitScope}}**{{conventionalCommitScope}}**: {{/conventionalCommitScope}}{{conventionalCommitDescription}}{{#conventionalCommitBreakingChangeContent}} - *{{conventionalCommitBreakingChangeContent}}*{{/conventionalCommitBreakingChangeContent}}{{/commitIsConventional}}{{^commitIsConventional}}{{commitTitle}}{{/commitIsConventional}}"
+      categoryTitleFormat: |
+        #### {{categoryTitle}}
+        \
+
+      contributorsTitleFormat: |
+        ### 👥 Contributors
+        \
+
+      content: |
+        ### ✨ Highlights
+
+        - None
+
+        ### ⚠️ Known Issues
+
+        - None
+
+        ### 🔎 Details
+
+        {{changelogChanges}}{{changelogContributors}}
+      contributors:
+        format: "- {{contributorName}}{{#contributorUsernameAsLink}} ({{.}}){{/contributorUsernameAsLink}}"
+      append:
+        enabled: true
+        title: "## {{tagName}} ({{#f_now}}YYYY-MM-dd{{/f_now}})"
+        target: CHANGELOG.md
+      hide:
+        contributors:
+          - "GitHub"
+          - "[bot]"

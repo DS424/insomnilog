@@ -5,6 +5,7 @@
 .vscode/*
 .spr.yml
 .claude/
+out/
 
 # GitHub / OS
 .DS_Store
