@@ -9,6 +9,7 @@ mod decode;
 mod encode;
 pub mod level;
 pub mod metadata;
+mod queue;
 
 pub use encode::Encode;
 pub use level::LogLevel;
