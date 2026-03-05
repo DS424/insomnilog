@@ -5,6 +5,7 @@
 //! writes to the console. The logging hot path performs **no allocations** and
 //! **never blocks**.
 
+mod backend;
 mod decode;
 mod encode;
 mod formatter;
