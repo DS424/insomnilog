@@ -5,8 +5,10 @@
 //! writes to the console. The logging hot path performs **no allocations** and
 //! **never blocks**.
 
+mod encode;
 pub mod level;
 pub mod metadata;
 
+pub use encode::Encode;
 pub use level::LogLevel;
 pub use metadata::LogMetadata;
