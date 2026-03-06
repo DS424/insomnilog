@@ -28,5 +28,10 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v3
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Test
         run: just test

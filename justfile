@@ -4,7 +4,8 @@ build:
     cargo build
 
 test:
-    cargo test
+    cargo nextest run
+    cargo test --doc
 
 lint:
     cargo fmt --all -- --check

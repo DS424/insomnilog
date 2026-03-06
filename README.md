@@ -109,6 +109,7 @@ This project uses [`just`](https://github.com/casey/just) as a command runner.
 
 ```sh
 cargo install just
+cargo install --locked cargo-nextest
 ```
 
 **Usage:**
@@ -116,7 +117,7 @@ cargo install just
 ```sh
 just                      # lint + test (default)
 just build                # build the project
-just test                 # run tests
+just test                 # run tests (via cargo-nextest)
 just fmt                  # format code
 just lint                 # run clippy
 just doc                  # build and open documentation
