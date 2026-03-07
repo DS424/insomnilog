@@ -38,3 +38,19 @@ jobs:
 
       - name: Test
         run: just test
+
+  realtime-sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Real-time sanitizer check
+        run: just realtime-sanitize
