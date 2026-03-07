@@ -161,6 +161,7 @@ pub struct DecodedRecord {
 ///
 /// The `metadata_ptr` field in the header must be a valid pointer to a
 /// `&'static LogMetadata`.
+#[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
 pub unsafe fn decode_record(data: &[u8]) -> Option<DecodedRecord> {
     if data.len() < RecordHeader::SIZE {
         return None;

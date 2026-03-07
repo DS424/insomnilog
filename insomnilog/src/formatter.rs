@@ -24,6 +24,7 @@ impl PatternFormatter {
     ///
     /// Returns a reference to an internal buffer that is valid until the next
     /// call to `format`.
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     pub fn format(&mut self, record: &DecodedRecord) -> &str {
         self.buf.clear();
 

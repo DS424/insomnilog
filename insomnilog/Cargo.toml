@@ -11,5 +11,11 @@ repository.workspace = true
 keywords = ["async", "logging", "log", "non-blocking"]
 categories = ["development-tools::debugging"]
 
+[dependencies]
+rtsan-standalone = { version = "0.3.0", optional = true }
+
+[features]
+rtsan = ["dep:rtsan-standalone"]
+
 [lints]
 workspace = true

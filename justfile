@@ -17,6 +17,9 @@ fmt:
 doc:
     cargo doc --document-private-items --no-deps --open
 
+realtime-sanitize:
+    RTSAN_ENABLE=1 cargo nextest run -p insomnilog --features rtsan
+
 generate-changelog:
     #!/usr/bin/env bash
     set -euo pipefail
