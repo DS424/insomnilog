@@ -20,6 +20,9 @@ doc:
 realtime-sanitize:
     RTSAN_ENABLE=1 cargo nextest run -p insomnilog --features rtsan
 
+thread-sanitize:
+    RUSTFLAGS="-Z sanitizer=thread" cargo +nightly nextest run -Z build-std --target x86_64-unknown-linux-gnu
+
 generate-changelog:
     #!/usr/bin/env bash
     set -euo pipefail
