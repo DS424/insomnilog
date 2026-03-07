@@ -73,3 +73,22 @@ jobs:
 
       - name: Thread sanitizer check
         run: just thread-sanitize
+
+  address-sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --component rust-src
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Address sanitizer check
+        run: just address-sanitize

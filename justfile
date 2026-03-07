@@ -22,6 +22,9 @@ realtime-sanitize:
 
 thread-sanitize:
     RUSTFLAGS="-Z sanitizer=thread" cargo +nightly nextest run -Z build-std --target x86_64-unknown-linux-gnu
+    
+address-sanitize:
+    RUSTFLAGS="-Z sanitizer=address" cargo +nightly nextest run -Z build-std --target x86_64-unknown-linux-gnu
 
 generate-changelog:
     #!/usr/bin/env bash
