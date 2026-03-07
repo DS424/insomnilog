@@ -8,6 +8,12 @@ fn main() {
         .queue_capacity(128 * 1024)
         .build();
 
+    // Pre-allocate the per-thread queue before entering the logging hot path.
+    // This ensures all subsequent log calls are real-time safe (zero allocation,
+    // zero locks). Without this call the allocation happens lazily on the first
+    // log statement instead.
+    logger.preallocate();
+
     log_trace!(logger, "trace message");
     log_debug!(logger, "debug: checking value {}", 123_i32);
     log_info!(logger, "application started");

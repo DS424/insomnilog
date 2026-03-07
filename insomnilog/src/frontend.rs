@@ -82,6 +82,44 @@ impl Logger {
         unsafe { core::mem::transmute::<u8, LogLevel>(self.level.load(Ordering::Relaxed)) }
     }
 
+    /// Pre-allocates the per-thread SPSC queue for the calling thread.
+    ///
+    /// Call this once per thread during non-real-time initialisation, before
+    /// entering any real-time context. After this call, all logging macros on
+    /// this thread are real-time safe: the hot path performs no allocation and
+    /// acquires no locks.
+    ///
+    /// Logging still works without this call — the queue is created lazily on
+    /// the first log statement — but that first call will allocate, which
+    /// violates real-time constraints. Calling `preallocate` moves that
+    /// allocation out of the hot path and into the initialisation phase where
+    /// it belongs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use insomnilog::{Logger, LogLevel, log_info};
+    ///
+    /// let logger = Logger::builder().level(LogLevel::Trace).build();
+    ///
+    /// // Initialise before the real-time section.
+    /// logger.preallocate();
+    ///
+    /// // From here the hot path is allocation-free.
+    /// log_info!(logger, "hello {}", "world");
+    /// logger.flush();
+    /// ```
+    pub fn preallocate(&self) {
+        TL_PRODUCER.with(|cell| {
+            let mut borrow = cell.borrow_mut();
+            if borrow.is_none() {
+                let (producer, consumer) = queue::bounded(self.shared.queue_capacity);
+                register_consumer(&self.shared, consumer);
+                *borrow = Some(ThreadLocalProducer { producer });
+            }
+        });
+    }
+
     /// Blocks until all pending log records have been written to the sink.
     pub fn flush(&self) {
         // Simple busy-wait: we check that all registered consumers are drained.
