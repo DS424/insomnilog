@@ -25,6 +25,21 @@ pub enum LogLevel {
     Error = 50,
 }
 
+impl From<u8> for LogLevel {
+    fn from(value: u8) -> Self {
+        match value {
+            10 => Self::Trace,
+            20 => Self::Debug,
+            30 => Self::Info,
+            40 => Self::Warn,
+            50 => Self::Error,
+            other => {
+                unreachable!("invalid LogLevel discriminant: {}", other);
+            }
+        }
+    }
+}
+
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -33,6 +48,24 @@ impl fmt::Display for LogLevel {
             Self::Info => f.write_str("INFO"),
             Self::Warn => f.write_str("WARN"),
             Self::Error => f.write_str("ERROR"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_u8_roundtrips() {
+        for level in [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warn,
+            LogLevel::Error,
+        ] {
+            assert_eq!(LogLevel::from(level as u8), level);
         }
     }
 }
