@@ -79,8 +79,7 @@ impl Logger {
     #[must_use]
     #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     pub fn level_filter(&self) -> LogLevel {
-        // SAFETY: we only store valid LogLevel discriminants (0..=4).
-        unsafe { core::mem::transmute::<u8, LogLevel>(self.level.load(Ordering::Relaxed)) }
+        LogLevel::from(self.level.load(Ordering::Relaxed))
     }
 
     /// Pre-allocates the per-thread SPSC queue for the calling thread.
