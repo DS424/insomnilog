@@ -101,6 +101,60 @@ log_warn!(logger, "disk usage at {}%", 87.5_f64);
 logger.flush();  // drain before exit
 ```
 
+## Real-Time Safety Validation
+
+insomnilog's hot path is designed to be real-time safe: no allocations, no
+locks, no blocking I/O on the logging thread. This contract can be verified
+mechanically with the [LLVM RealtimeSanitizer (RTSan)](https://clang.llvm.org/docs/RealtimeSanitizer.html)
+via the optional `rtsan` Cargo feature.
+
+### Validating insomnilog itself
+
+```sh
+just realtime-sanitize
+# expands to: RTSAN_ENABLE=1 cargo nextest run -p insomnilog --features rtsan
+```
+
+RTSan aborts the process with a precise diagnostic if any hot-path code
+allocates, locks a mutex, or performs blocking I/O.
+
+### Validating your application
+
+If you want to verify that your own real-time threads stay clean when using
+insomnilog, follow these two steps:
+
+**1. Preallocate the per-thread queue before entering the real-time context.**
+
+The first log call from a new thread allocates the SPSC queue. Move that
+allocation out of the hot path by calling `preallocate()` during thread
+initialisation (e.g. in thread setup, before the audio callback starts):
+
+```rust
+// Thread setup — outside the real-time callback:
+logger.preallocate();
+```
+
+**2. Annotate your real-time entry point and enable RTSan.**
+
+```rust
+#[rtsan_standalone::nonblocking]   // tells RTSan this is a real-time context
+fn audio_callback(logger: &Logger, /* … */) {
+    log_info!(logger, "processing block {}", block_id);
+    // … your DSP code …
+}
+```
+
+Add `rtsan-standalone` as a dev-dependency and enable the `rtsan` feature on
+insomnilog, then run your test suite with `RTSAN_ENABLE=1`:
+
+```sh
+RTSAN_ENABLE=1 cargo nextest run --features rtsan
+```
+
+The `rtsan-standalone` crate is a no-op when `RTSAN_ENABLE` is unset, so
+you can ship `--features rtsan` in production builds without any overhead.
+RTSan is supported on Linux and macOS.
+
 ## Development
 
 This project uses [`just`](https://github.com/casey/just) as a command runner.
