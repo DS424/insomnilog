@@ -77,6 +77,7 @@ impl Logger {
     /// Returns the current log level filter.
     #[inline]
     #[must_use]
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     pub fn level_filter(&self) -> LogLevel {
         // SAFETY: we only store valid LogLevel discriminants (0..=4).
         unsafe { core::mem::transmute::<u8, LogLevel>(self.level.load(Ordering::Relaxed)) }
@@ -212,8 +213,11 @@ thread_local! {
 /// Calls `f` with the thread-local producer for the given logger.
 ///
 /// On first call from a new thread, creates a new SPSC queue and registers
-/// the consumer half with the backend.
+/// the consumer half with the backend. That first call is **not** real-time
+/// safe; call [`Logger::preallocate`] during thread initialisation to move the
+/// allocation out of the hot path.
 #[inline]
+#[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 pub fn with_producer<F>(logger: &Logger, f: F)
 where
     F: FnOnce(&mut Producer),

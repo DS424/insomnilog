@@ -51,6 +51,7 @@ impl BackendWorker {
 
     /// Runs the backend loop. Returns when shutdown is complete and all queues
     /// are drained.
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     pub fn run(&mut self) {
         let mut idle_rounds: u32 = 0;
 
@@ -76,6 +77,7 @@ impl BackendWorker {
     }
 
     /// Polls all registered consumers once. Returns `true` if any work was done.
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     fn poll_all(&mut self) -> bool {
         // Take the consumers out of the mutex briefly to avoid holding the lock
         // while doing I/O. Other threads may register new consumers while we
@@ -117,6 +119,7 @@ impl BackendWorker {
 
     /// Tries to read and process one record from `consumer`.
     /// Returns `true` if a record was processed.
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     fn drain_one(&mut self, consumer: &mut Consumer) -> bool {
         let avail = consumer.available();
         if avail < RecordHeader::SIZE {

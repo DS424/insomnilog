@@ -35,12 +35,14 @@ impl ConsoleSink {
 }
 
 impl Sink for ConsoleSink {
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     fn write_line(&mut self, line: &str) -> io::Result<()> {
         self.writer.write_all(line.as_bytes())?;
         self.writer.write_all(b"\n")?;
         Ok(())
     }
 
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
     }

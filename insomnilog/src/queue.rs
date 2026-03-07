@@ -99,6 +99,7 @@ impl Producer {
     ///
     /// Returns `None` if there is not enough space (silent drop semantics).
     /// The returned slice is only valid until the next call to [`Self::commit`].
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     pub fn try_reserve(&mut self, n: usize) -> Option<*mut u8> {
         let capacity = self.inner.capacity;
         if n > capacity {
@@ -146,6 +147,7 @@ impl Producer {
     /// # Panics
     ///
     /// Panics in debug mode if `n` would advance past the consumer.
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     pub fn commit(&mut self, n: usize) {
         self.write += n;
         self.inner
