@@ -4,6 +4,7 @@
 //! buffer backed by a single contiguous allocation. The producer and consumer
 //! each cache the other's position to minimize cross-cache-line reads.
 
+use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -24,7 +25,15 @@ impl<T> CachePadded<T> {
 /// Shared state of the SPSC queue.
 struct QueueInner {
     /// The underlying ring buffer.
-    buf: Box<[u8]>,
+    ///
+    /// Each byte is wrapped in [`UnsafeCell`] so that both the producer and
+    /// consumer can access the buffer through a shared `Arc` reference without
+    /// violating aliasing rules. All pointer derivation uses
+    /// [`UnsafeCell::raw_get`] to avoid creating intermediate references that
+    /// would assert `SharedReadOnly` over the entire allocation. The SPSC
+    /// atomic positions guarantee that producer and consumer never access the
+    /// same bytes concurrently.
+    buf: Box<[UnsafeCell<u8>]>,
     /// Power-of-2 capacity (used as bitmask: `pos & mask == pos % capacity`).
     capacity: usize,
     /// Bitmask: `capacity - 1`.
@@ -58,6 +67,12 @@ pub struct Consumer {
     read: usize,
 }
 
+// SAFETY: The ring buffer is accessed only through the atomic read/write
+// positions, which guarantee that producer and consumer never touch the same
+// bytes concurrently. `Box<[UnsafeCell<u8>]>` is `!Sync` by default; this
+// impl asserts that the invariant above makes concurrent access safe.
+unsafe impl Sync for QueueInner {}
+
 // SAFETY: Consumer is only used by the single backend thread, and the queue's
 // atomic positions ensure correct synchronization with the producer.
 unsafe impl Send for Consumer {}
@@ -73,7 +88,10 @@ unsafe impl Send for Consumer {}
 pub fn bounded(capacity: usize) -> (Producer, Consumer) {
     assert!(capacity > 0, "queue capacity must be > 0");
     let capacity = capacity.next_power_of_two();
-    let buf = vec![0u8; capacity].into_boxed_slice();
+    let buf: Box<[UnsafeCell<u8>]> = core::iter::repeat_with(|| UnsafeCell::new(0u8))
+        .take(capacity)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
     let inner = Arc::new(QueueInner {
         buf,
         capacity,
@@ -136,9 +154,10 @@ impl Producer {
         }
 
         let offset = self.write & self.inner.mask;
-        // SAFETY: offset + n <= capacity (ensured above), and we have exclusive
-        // write access to this region.
-        let ptr = unsafe { self.inner.buf.as_ptr().add(offset).cast_mut() };
+        // SAFETY: offset + n <= capacity (ensured above) and we have exclusive
+        // write access to this region. raw_get derives a *mut u8 from the
+        // UnsafeCell without creating any intermediate reference.
+        let ptr = unsafe { UnsafeCell::raw_get(self.inner.buf.as_ptr().add(offset)) };
         Some(ptr)
     }
 
@@ -179,21 +198,31 @@ impl Consumer {
         let start = self.read & self.inner.mask;
         let end = start + len;
 
+        // SAFETY: all accesses below are within bounds and the producer has
+        // committed these bytes. raw_get is used throughout to derive pointers
+        // without creating references that cover producer-owned bytes.
+        let buf_ptr = self.inner.buf.as_ptr();
         if end <= self.inner.capacity {
-            // No wrap — return a direct slice.
-            // SAFETY: start..start+len is within bounds and the producer has
-            // committed these bytes.
+            // No wrap — return a direct slice into the ring buffer.
             unsafe {
-                let ptr = self.inner.buf.as_ptr().add(start);
+                let ptr = UnsafeCell::raw_get(buf_ptr.add(start)).cast_const();
                 core::slice::from_raw_parts(ptr, len)
             }
         } else {
-            // Wrap around — copy into staging buffer.
+            // Wrap around — copy both segments into the staging buffer.
+            let first = self.inner.capacity - start;
             staging.clear();
             staging.reserve(len);
-            let first = self.inner.capacity - start;
-            staging.extend_from_slice(&self.inner.buf[start..self.inner.capacity]);
-            staging.extend_from_slice(&self.inner.buf[..len - first]);
+            unsafe {
+                staging.extend_from_slice(core::slice::from_raw_parts(
+                    UnsafeCell::raw_get(buf_ptr.add(start)).cast_const(),
+                    first,
+                ));
+                staging.extend_from_slice(core::slice::from_raw_parts(
+                    UnsafeCell::raw_get(buf_ptr).cast_const(),
+                    len - first,
+                ));
+            }
             staging
         }
     }
