@@ -1,26 +1,5 @@
-//! An asynchronous Rust logging library that never blocks.
-//!
-//! `insomnilog` serializes log arguments as raw bytes into per-thread lock-free
-//! SPSC ring buffers. A dedicated backend thread reads, decodes, formats, and
-//! writes to the console. The logging hot path performs **no allocations** and
-//! **never blocks**.
-//!
-//! # Quick Start
-//!
-//! ```
-//! use insomnilog::{Logger, LogLevel, log_info, log_warn};
-//!
-//! let logger = Logger::builder()
-//!     .level(LogLevel::Info)
-//!     .queue_capacity(128 * 1024)
-//!     .build();
-//!
-//! log_info!(logger, "application started");
-//! log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
-//! log_warn!(logger, "disk usage at {}%", 87.5_f64);
-//!
-//! logger.flush();
-//! ```
+#![doc = include_str!("../README.md")]
+#![doc = include_str!("../CHANGELOG.md")]
 
 mod backend;
 mod decode;

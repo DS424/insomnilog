@@ -1,7 +1,7 @@
 //! Logging macros.
 //!
 //! These macros provide the primary user-facing API for emitting log records.
-//! Each macro invocation creates a `static` [`LogMetadata`] at the callsite
+//! Each macro invocation creates a `static` `LogMetadata` at the callsite
 //! and encodes the arguments directly into the per-thread SPSC queue.
 
 /// Core logging macro. Prefer the level-specific convenience macros.
