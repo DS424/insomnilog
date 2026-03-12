@@ -1,4 +1,4 @@
-default: lint test
+default: lint test doc-check
 
 build:
     cargo build
@@ -16,6 +16,9 @@ fmt:
 
 doc:
     cargo doc --document-private-items --no-deps --open
+
+doc-check:
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
 sanitize: realtime-sanitize thread-sanitize address-sanitize
 
