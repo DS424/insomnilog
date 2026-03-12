@@ -39,6 +39,17 @@ jobs:
       - name: Test
         run: just test
 
+  doc-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Doc check
+        run: just doc-check
+
   realtime-sanitize:
     runs-on: ubuntu-latest
     steps:
