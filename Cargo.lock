@@ -108,14 +108,14 @@ dependencies = [
 
 [[package]]
 name = "insomnilog"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rtsan-standalone",
 ]
 
 [[package]]
 name = "insomnilog-examples"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "insomnilog",
 ]
