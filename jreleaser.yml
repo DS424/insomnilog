@@ -30,7 +30,7 @@ release:
         format: "- {{contributorName}}{{#contributorUsernameAsLink}} ({{.}}){{/contributorUsernameAsLink}}"
       append:
         enabled: true
-        title: "## {{tagName}} ({{#f_now}}YYYY-MM-dd{{/f_now}})"
+        title: "## {{projectVersion}} ({{#f_now}}YYYY-MM-dd{{/f_now}})"
         target: CHANGELOG.md
       hide:
         contributors:
