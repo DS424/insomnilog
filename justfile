@@ -20,7 +20,7 @@ doc:
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
-sanitize: realtime-sanitize thread-sanitize address-sanitize
+sanitize: realtime-sanitize thread-sanitize address-sanitize miri
 
 realtime-sanitize:
     RTSAN_ENABLE=1 cargo nextest run -p insomnilog --features rtsan
@@ -30,6 +30,9 @@ thread-sanitize:
 
 address-sanitize:
     RUSTFLAGS="-Z sanitizer=address" cargo +nightly nextest run -Z build-std --target x86_64-unknown-linux-gnu
+
+miri:
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri nextest run -p insomnilog
 
 generate-changelog:
     #!/usr/bin/env bash

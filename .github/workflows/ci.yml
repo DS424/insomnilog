@@ -104,3 +104,22 @@ jobs:
 
       - name: Address sanitizer check
         run: just address-sanitize
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain with miri
+        run: rustup toolchain install nightly --component miri --component rust-src
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: MIRI check
+        run: just miri
