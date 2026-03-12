@@ -4,12 +4,13 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "An asynchronous Rust logging library that never blocks"
-readme.workspace = true
+description = "An asynchronous Rust logging library that never sleeps"
+readme = "README.md"
 license.workspace = true
 repository.workspace = true
-keywords = ["async", "logging", "log", "non-blocking"]
+keywords = ["logging", "log", "non-blocking", "real-time"]
 categories = ["development-tools::debugging"]
+include = ["src/**/*", "tests/**/*", "README.md", "CHANGELOG.md", "LICENSE", "NOTICES"]
 
 [dependencies]
 rtsan-standalone = { version = "0.3.0", optional = true }

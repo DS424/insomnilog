@@ -12,7 +12,6 @@ rust-version = "1.89"
 authors = ["Dwayne Steinke <ds424@d-steinke.de>"]
 license = "MIT"
 repository = "https://github.com/DS424/insomnilog"
-readme = "README.md"
 
 [workspace.lints.rust]
 missing_docs = "warn"
