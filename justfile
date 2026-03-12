@@ -36,3 +36,4 @@ generate-changelog:
     set -euo pipefail
     version=$(cargo pkgid insomnilog | cut -d'#' -f2)
     JRELEASER_PROJECT_VERSION="$version" JRELEASER_GENERIC_TOKEN=None jreleaser changelog --basedir .
+    sed -i '/for their contributions:$/{n;s/^-/\n-/}' CHANGELOG.md
