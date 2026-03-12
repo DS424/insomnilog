@@ -6,6 +6,25 @@ Log arguments are serialised as raw bytes into a per-thread lock-free SPSC ring
 buffer. A dedicated backend thread reads, decodes, formats, and writes to the
 console. The logging hot path performs **no allocations**, **never blocks**, and is therefore **realtime-safe**.
 
+insomnilog is highly inspired by [Quill](https://github.com/odygrd/quill).
+
+## Quick Start
+
+```rust
+use insomnilog::{Logger, LogLevel, log_info, log_warn};
+
+let logger = Logger::builder()
+    .level(LogLevel::Info)
+    .queue_capacity(128 * 1024)  // 128 KiB per-thread queue
+    .build();
+
+log_info!(logger, "application started");
+log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
+log_warn!(logger, "disk usage at {}%", 87.5_f64);
+
+logger.flush();  // drain before exit
+```
+
 ## Design Goals
 
 - **Zero allocations on the hot path** — `log_info!` only calls `try_reserve`
@@ -18,7 +37,7 @@ console. The logging hot path performs **no allocations**, **never blocks**, and
 
 ## Architecture
 
-```
+```txt
 Logging Thread(s)               Backend Thread
 ┌─────────────────┐             ┌──────────────────────┐
 │ log_info!(...)  │             │ BackendWorker::run() │
@@ -51,11 +70,12 @@ and registers the consumer half with the backend on first use.
 
 Each log record written into the ring buffer:
 
-```
+```txt
 [RecordHeader: 24 bytes] [Arg₁: 1 tag + N bytes] [Arg₂: 1 tag + N bytes] …
 ```
 
 `RecordHeader` (repr(C)) carries:
+
 - `timestamp_ns: u64` — nanoseconds since UNIX epoch
 - `metadata_ptr: usize` — pointer to the `&'static LogMetadata`
 - `encoded_args_size: u32` — total byte length of the arguments that follow
@@ -84,23 +104,6 @@ Each log record written into the ring buffer:
 
 All multi-byte values use native-endian byte order.
 
-## Quick Start
-
-```rust
-use insomnilog::{Logger, LogLevel, log_info, log_warn};
-
-let logger = Logger::builder()
-    .level(LogLevel::Info)
-    .queue_capacity(128 * 1024)  // 128 KiB per-thread queue
-    .build();
-
-log_info!(logger, "application started");
-log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
-log_warn!(logger, "disk usage at {}%", 87.5_f64);
-
-logger.flush();  // drain before exit
-```
-
 ## Real-Time Safety Validation
 
 insomnilog's hot path is designed to be real-time safe: no allocations, no
@@ -115,7 +118,7 @@ just realtime-sanitize
 # expands to: RTSAN_ENABLE=1 cargo nextest run -p insomnilog --features rtsan
 ```
 
-RTSan aborts the process with a precise diagnostic if any hot-path code
+`RTSan` aborts the process with a precise diagnostic if any hot-path code
 allocates, locks a mutex, or performs blocking I/O.
 
 ### Validating your application
@@ -130,13 +133,15 @@ allocation out of the hot path by calling `preallocate()` during thread
 initialisation (e.g. in thread setup, before the audio callback starts):
 
 ```rust
+# use insomnilog::{Logger};
+# let logger = Logger::builder().build();
 // Thread setup — outside the real-time callback:
 logger.preallocate();
 ```
 
-**2. Annotate your real-time entry point and enable RTSan.**
+**2. Annotate your real-time entry point and enable `RTSan`.**
 
-```rust
+```rust,ignore
 #[rtsan_standalone::nonblocking]   // tells RTSan this is a real-time context
 fn audio_callback(logger: &Logger, /* … */) {
     log_info!(logger, "processing block {}", block_id);
@@ -153,7 +158,7 @@ RTSAN_ENABLE=1 cargo nextest run --features rtsan
 
 The `rtsan-standalone` crate is a no-op when `RTSAN_ENABLE` is unset, so
 you can ship `--features rtsan` in production builds without any overhead.
-RTSan is supported on Linux and macOS.
+`RTSan` is supported on Linux and macOS.
 
 ## Development
 
