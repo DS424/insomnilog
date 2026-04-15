@@ -11,6 +11,7 @@ pub mod level;
 pub mod macros;
 pub mod metadata;
 mod queue;
+mod queue2;
 mod sink;
 
 // Public re-exports.
