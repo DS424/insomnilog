@@ -34,8 +34,6 @@ pub struct BackendWorker {
     formatter: PatternFormatter,
     /// Output sink (console).
     sink: ConsoleSink,
-    /// Staging buffer for wrap-around reads.
-    staging: Vec<u8>,
 }
 
 impl BackendWorker {
@@ -45,7 +43,6 @@ impl BackendWorker {
             shared,
             formatter: PatternFormatter::new(),
             sink: ConsoleSink::new(),
-            staging: Vec::with_capacity(4096),
         }
     }
 
@@ -126,32 +123,32 @@ impl BackendWorker {
             return false;
         }
 
-        // Read header to determine total record size.
-        let header_bytes = consumer.read_bytes(RecordHeader::SIZE, &mut self.staging);
-
-        // SAFETY: we have at least RecordHeader::SIZE bytes.
-        // We use read_unaligned because the byte buffer may not be aligned.
-        let header =
-            unsafe { core::ptr::read_unaligned(header_bytes.as_ptr().cast::<RecordHeader>()) };
-        let total = RecordHeader::SIZE + header.encoded_args_size as usize;
-
+        let total = record_total(consumer);
         if avail < total {
-            // Incomplete record — wait for the producer to commit.
+            // Incomplete record — wait for the producer to commit more bytes.
             return false;
         }
 
-        // Read the full record (header + args).
-        let record_bytes = consumer.read_bytes(total, &mut self.staging);
-
         // SAFETY: metadata_ptr was set by the log macro to a valid static ref.
-        let decoded = unsafe { decode::decode_record(record_bytes) };
+        let decoded = consumer.read(total, |record_bytes| unsafe {
+            decode::decode_record(record_bytes)
+        });
 
         if let Some(record) = decoded {
             let line = self.formatter.format(&record);
             let _ = self.sink.write_line(line);
         }
 
-        consumer.advance(total);
         true
     }
+}
+
+/// Peeks at the record header to determine the total byte length of the
+/// next record (header + encoded args). Does not advance the read position.
+fn record_total(consumer: &mut Consumer) -> usize {
+    let header_bytes = consumer.peek(RecordHeader::SIZE);
+    // SAFETY: `peek` returns exactly `RecordHeader::SIZE` bytes committed by
+    // the producer. `read_unaligned` handles any alignment offset.
+    let header = unsafe { core::ptr::read_unaligned(header_bytes.as_ptr().cast::<RecordHeader>()) };
+    RecordHeader::SIZE + header.encoded_args_size as usize
 }

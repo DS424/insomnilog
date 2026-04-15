@@ -32,7 +32,9 @@ macro_rules! log {
             let arg_size: usize = 0 $(+ 1 + $crate::Encode::encoded_size(&$arg))*;
             let total = $crate::_record_header_size() + arg_size;
             $crate::with_producer(logger, |producer| {
-                if let Some(ptr) = producer.try_reserve(total) {
+                // Silently drop if the queue is full or the record is oversized.
+                let _ = producer.write(total, |buf| {
+                    let ptr = buf.as_mut_ptr();
                     unsafe {
                         // Write the record header.
                         let timestamp_ns = $crate::_timestamp_ns();
@@ -57,11 +59,8 @@ macro_rules! log {
                             // Write encoded value.
                             _offset += $crate::Encode::encode_to(&$arg, ptr.add(_offset));
                         )*
-
-                        producer.commit(total);
                     }
-                }
-                // else: silently drop
+                });
             });
         }
     }};

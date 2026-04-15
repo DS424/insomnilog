@@ -113,7 +113,7 @@ impl Logger {
         TL_PRODUCER.with(|cell| {
             let mut borrow = cell.borrow_mut();
             if borrow.is_none() {
-                let (producer, consumer) = queue::bounded(self.shared.queue_capacity);
+                let (producer, consumer) = queue::new(self.shared.queue_capacity);
                 register_consumer(&self.shared, consumer);
                 *borrow = Some(ThreadLocalProducer { producer });
             }
@@ -224,7 +224,7 @@ where
     TL_PRODUCER.with(|cell| {
         let mut borrow = cell.borrow_mut();
         if borrow.is_none() {
-            let (producer, consumer) = queue::bounded(logger.shared.queue_capacity);
+            let (producer, consumer) = queue::new(logger.shared.queue_capacity);
             register_consumer(&logger.shared, consumer);
             *borrow = Some(ThreadLocalProducer { producer });
         }
