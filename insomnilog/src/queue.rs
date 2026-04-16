@@ -185,10 +185,10 @@ impl Producer {
             return None;
         }
 
-        let mut available = capacity - (self.write - self.cached_read);
+        let mut available = capacity - self.write.wrapping_sub(self.cached_read);
         if available < n {
             self.cached_read = self.inner.read_pos.value.load(Ordering::Acquire);
-            available = capacity - (self.write - self.cached_read);
+            available = capacity - self.write.wrapping_sub(self.cached_read);
             if available < n {
                 return None;
             }
@@ -204,7 +204,7 @@ impl Producer {
     /// Commits `n` bytes, making them visible to the consumer.
     #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     fn commit(&mut self, n: usize) {
-        self.write += n;
+        self.write = self.write.wrapping_add(n);
         self.inner
             .write_pos
             .value
@@ -216,10 +216,10 @@ impl Consumer {
     /// Returns the number of bytes available for reading.
     pub fn available(&mut self) -> usize {
         if self.cached_write > self.read {
-            return self.cached_write - self.read;
+            return self.cached_write.wrapping_sub(self.read);
         }
         self.cached_write = self.inner.write_pos.value.load(Ordering::Acquire);
-        self.cached_write - self.read
+        self.cached_write.wrapping_sub(self.read)
     }
 
     /// Returns a slice of `len` bytes at the current read position **without**
@@ -284,7 +284,7 @@ impl Consumer {
 
     /// Advances the read position by `n` bytes.
     fn advance(&mut self, n: usize) {
-        self.read += n;
+        self.read = self.read.wrapping_add(n);
         self.inner
             .read_pos
             .value
