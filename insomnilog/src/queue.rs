@@ -230,6 +230,21 @@ impl Consumer {
     /// the position is not advanced, the subsequent [`Self::read`] still lands
     /// at the correct offset. `len` must not exceed `available()`.
     ///
+    /// # Validity of slice data
+    ///
+    /// Both `peek` and [`Self::read`] take `&mut self`, so holding the returned
+    /// slice keeps `self` mutably borrowed and prevents calling `read` until the
+    /// slice is dropped. Since only read can advance the ring buffer, the slice
+    /// can not be overwritten with new data by the Producer.
+    ///
+    /// ```compile_fail
+    /// let (_, mut cons) = insomnilog::_queue_new(4);
+    /// let s = cons.peek(4);
+    /// let _ = cons.read(4, |b| b.to_vec()); // error[E0499]: cannot borrow `cons`
+    ///                                        // as mutable more than once at a time
+    /// println!("{s:?}");
+    /// ```
+    ///
     /// # Panics
     ///
     /// Panics in debug builds if `len` exceeds the number of available bytes.
