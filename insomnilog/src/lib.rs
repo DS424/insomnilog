@@ -25,6 +25,12 @@ pub use decode::RecordHeader as _RecordHeader;
 #[doc(hidden)]
 pub use queue::Producer as _Producer;
 
+// Re-exports used by compile-fail doctests (hidden from docs).
+#[doc(hidden)]
+pub use queue::Consumer as _Consumer;
+#[doc(hidden)]
+pub use queue::new as _queue_new;
+
 /// Returns the size of a [`RecordHeader`](decode::RecordHeader) in bytes.
 ///
 /// Used by the logging macros to calculate buffer sizes.
