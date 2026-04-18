@@ -1,6 +1,9 @@
 //! Default usage test
 
-use insomnilog::{LogLevel, Logger, log_debug, log_error, log_info, log_trace, log_warn};
+use insomnilog::legacy::{LogLevel, Logger};
+use insomnilog::{
+    legacy_log_debug, legacy_log_error, legacy_log_info, legacy_log_trace, legacy_log_warn,
+};
 
 /// Exercise all log-level macros.
 ///
@@ -9,11 +12,11 @@ use insomnilog::{LogLevel, Logger, log_debug, log_error, log_info, log_trace, lo
 /// or perform blocking I/O — the core contract of insomnilog's hot path.
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 fn log_all_levels(logger: &Logger) {
-    log_trace!(logger, "trace {} {}", 1i32, true);
-    log_debug!(logger, "debug {}", 1.5f64);
-    log_info!(logger, "info {}", "hello world");
-    log_warn!(logger, "warn {}", 100u64);
-    log_error!(logger, "error {} {}", -1i64, 255u8);
+    legacy_log_trace!(logger, "trace {} {}", 1i32, true);
+    legacy_log_debug!(logger, "debug {}", 1.5f64);
+    legacy_log_info!(logger, "info {}", "hello world");
+    legacy_log_warn!(logger, "warn {}", 100u64);
+    legacy_log_error!(logger, "error {} {}", -1i64, 255u8);
 }
 
 #[test]

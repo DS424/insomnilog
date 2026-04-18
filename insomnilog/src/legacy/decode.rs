@@ -3,8 +3,8 @@
 use core::fmt;
 use core::ptr;
 
-use crate::encode::TypeTag;
-use crate::metadata::LogMetadata;
+use super::encode::TypeTag;
+use super::metadata::LogMetadata;
 
 /// A single decoded argument from the binary stream.
 #[derive(Debug, Clone, PartialEq)]
@@ -198,8 +198,8 @@ pub unsafe fn decode_record(data: &[u8]) -> Option<DecodedRecord> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::encode::{Encode, TypeTag};
     use super::*;
-    use crate::encode::{Encode, TypeTag};
 
     #[test]
     fn decode_i32_roundtrip() {

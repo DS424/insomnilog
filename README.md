@@ -11,16 +11,17 @@ insomnilog is highly inspired by [Quill](https://github.com/odygrd/quill).
 ## Quick Start
 
 ```rust
-use insomnilog::{Logger, LogLevel, log_info, log_warn};
+use insomnilog::legacy::{Logger, LogLevel};
+use insomnilog::{legacy_log_info, legacy_log_warn};
 
 let logger = Logger::builder()
     .level(LogLevel::Info)
     .queue_capacity(128 * 1024)  // 128 KiB per-thread queue
     .build();
 
-log_info!(logger, "application started");
-log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
-log_warn!(logger, "disk usage at {}%", 87.5_f64);
+legacy_log_info!(logger, "application started");
+legacy_log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
+legacy_log_warn!(logger, "disk usage at {}%", 87.5_f64);
 
 logger.flush();  // drain before exit
 ```
@@ -133,7 +134,7 @@ allocation out of the hot path by calling `preallocate()` during thread
 initialisation (e.g. in thread setup, before the audio callback starts):
 
 ```rust
-# use insomnilog::{Logger};
+# use insomnilog::legacy::Logger;
 # let logger = Logger::builder().build();
 // Thread setup — outside the real-time callback:
 logger.preallocate();

@@ -238,7 +238,7 @@ impl Consumer {
     /// can not be overwritten with new data by the Producer.
     ///
     /// ```compile_fail
-    /// let (_, mut cons) = insomnilog::_queue_new(4);
+    /// let (_, mut cons) = insomnilog::legacy::_queue_new(4);
     /// let s = cons.peek(4);
     /// let _ = cons.read(4, |b| b.to_vec()); // error[E0499]: cannot borrow `cons`
     ///                                        // as mutable more than once at a time

@@ -1,6 +1,9 @@
 //! Basic usage of `insomnilog`: build a logger and emit records at every level.
 
-use insomnilog::{LogLevel, Logger, log_debug, log_error, log_info, log_trace, log_warn};
+use insomnilog::legacy::{LogLevel, Logger};
+use insomnilog::{
+    legacy_log_debug, legacy_log_error, legacy_log_info, legacy_log_trace, legacy_log_warn,
+};
 
 fn main() {
     let logger = Logger::builder()
@@ -14,14 +17,14 @@ fn main() {
     // log statement instead.
     logger.preallocate();
 
-    log_trace!(logger, "trace message");
-    log_debug!(logger, "debug: checking value {}", 123_i32);
-    log_info!(logger, "application started");
-    log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
-    log_warn!(logger, "disk usage at {}%", 87.5_f64);
-    log_error!(logger, "connection lost to host {}", "db-primary");
-    log_info!(logger, "bool test: {}", true);
-    log_info!(logger, "i128 test: {}", 999_999_999_999_999_i128);
+    legacy_log_trace!(logger, "trace message");
+    legacy_log_debug!(logger, "debug: checking value {}", 123_i32);
+    legacy_log_info!(logger, "application started");
+    legacy_log_info!(logger, "user {} logged in with id {}", "alice", 42_u64);
+    legacy_log_warn!(logger, "disk usage at {}%", 87.5_f64);
+    legacy_log_error!(logger, "connection lost to host {}", "db-primary");
+    legacy_log_info!(logger, "bool test: {}", true);
+    legacy_log_info!(logger, "i128 test: {}", 999_999_999_999_999_i128);
 
     logger.flush();
 }
