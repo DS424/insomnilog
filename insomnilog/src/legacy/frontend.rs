@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use crate::backend::{BackendWorker, SharedState};
-use crate::level::LogLevel;
-use crate::queue::{self, Consumer, Producer};
+use super::backend::{BackendWorker, SharedState};
+use super::level::LogLevel;
+use super::queue::{self, Consumer, Producer};
 
 /// Default per-thread queue capacity (128 KiB).
 const DEFAULT_QUEUE_CAPACITY: usize = 128 * 1024;
@@ -21,10 +21,11 @@ const DEFAULT_QUEUE_CAPACITY: usize = 128 * 1024;
 /// # Examples
 ///
 /// ```
-/// use insomnilog::{Logger, LogLevel, log_info};
+/// use insomnilog::legacy::{Logger, LogLevel};
+/// use insomnilog::legacy_log_info;
 ///
 /// let logger = Logger::builder().level(LogLevel::Info).build();
-/// log_info!(logger, "hello {}", "world");
+/// legacy_log_info!(logger, "hello {}", "world");
 /// logger.flush();
 /// ```
 pub struct Logger {
@@ -98,7 +99,8 @@ impl Logger {
     /// # Examples
     ///
     /// ```
-    /// use insomnilog::{Logger, LogLevel, log_info};
+    /// use insomnilog::legacy::{Logger, LogLevel};
+    /// use insomnilog::legacy_log_info;
     ///
     /// let logger = Logger::builder().level(LogLevel::Trace).build();
     ///
@@ -106,7 +108,7 @@ impl Logger {
     /// logger.preallocate();
     ///
     /// // From here the hot path is allocation-free.
-    /// log_info!(logger, "hello {}", "world");
+    /// legacy_log_info!(logger, "hello {}", "world");
     /// logger.flush();
     /// ```
     pub fn preallocate(&self) {

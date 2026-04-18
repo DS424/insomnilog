@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use crate::decode::{DecodedArg, DecodedRecord};
+use super::decode::{DecodedArg, DecodedRecord};
 
 /// Formats decoded records into human-readable log lines.
 ///
@@ -67,10 +67,10 @@ fn format_message(buf: &mut String, fmt_str: &str, args: &[DecodedArg]) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::decode::DecodedRecord;
+    use super::super::level::LogLevel;
+    use super::super::metadata::LogMetadata;
     use super::*;
-    use crate::decode::DecodedRecord;
-    use crate::level::LogLevel;
-    use crate::metadata::LogMetadata;
 
     #[test]
     fn format_basic_message() {

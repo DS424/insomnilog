@@ -1,6 +1,6 @@
 //! Static per-callsite metadata for log records.
 
-use crate::level::LogLevel;
+use super::level::LogLevel;
 
 /// Static metadata associated with a single log callsite.
 ///

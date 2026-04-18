@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::decode::{self, RecordHeader};
-use crate::formatter::PatternFormatter;
-use crate::queue::Consumer;
-use crate::sink::{ConsoleSink, Sink};
+use super::decode::{self, RecordHeader};
+use super::formatter::PatternFormatter;
+use super::queue::Consumer;
+use super::sink::{ConsoleSink, Sink};
 
 /// Maximum number of idle poll rounds before sleeping.
 const MAX_IDLE_ROUNDS: u32 = 32;
