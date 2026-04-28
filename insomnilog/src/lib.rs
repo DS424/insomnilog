@@ -2,3 +2,4 @@
 #![doc = include_str!("../CHANGELOG.md")]
 
 pub mod legacy;
+mod queue;
