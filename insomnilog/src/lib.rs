@@ -3,4 +3,5 @@
 
 pub mod legacy;
 mod level;
+mod metadata;
 mod queue;

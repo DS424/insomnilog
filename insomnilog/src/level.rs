@@ -2,13 +2,6 @@
 
 use core::fmt;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired up once macros.rs and the backend module land"
-    )
-)]
 /// Severity level for a log record.
 ///
 /// Levels are ordered from least to most severe:
