@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("../CHANGELOG.md")]
 
+mod decode;
 mod encode;
 pub mod legacy;
 mod level;
