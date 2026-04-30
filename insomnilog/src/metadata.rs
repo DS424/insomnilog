@@ -2,13 +2,6 @@
 
 use crate::level::LogLevel;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired up once macros.rs and the backend module land"
-    )
-)]
 /// Static metadata associated with a single log callsite.
 ///
 /// Created once per `log!` macro invocation as a `static` item.

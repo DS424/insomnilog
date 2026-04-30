@@ -4,6 +4,7 @@
 mod backend;
 mod decode;
 mod encode;
+mod formatter;
 pub mod legacy;
 mod level;
 mod lifecycle;
@@ -15,4 +16,5 @@ mod record;
 pub(crate) mod testutil;
 
 pub use backend::BackendOptions;
+pub use formatter::{Formatter, InvalidPatternError, PatternFormatter};
 pub use lifecycle::{AlreadyStarted, ShutdownGuard, shutdown, start};
