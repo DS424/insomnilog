@@ -6,6 +6,7 @@ pub mod legacy;
 mod level;
 mod metadata;
 mod queue;
+mod record;
 
 #[cfg(test)]
 pub(crate) mod testutil;
