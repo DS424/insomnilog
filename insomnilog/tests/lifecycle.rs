@@ -2,11 +2,14 @@
 //!
 //! The library uses a process-wide `OnceLock<Backend>`; `cargo nextest run`
 //! gives every test its own process so each one starts with a fresh global
-//! (see Plan.md §5 "Global vs explicit Backend handle").
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use insomnilog::{AlreadyStarted, BackendOptions, ShutdownGuard, shutdown, start};
+use insomnilog::{
+    AlreadyStarted, BackendOptions, LogLevel, NullSink, ShutdownGuard, Sink, get_sink,
+    register_sink, shutdown, start,
+};
 
 #[test]
 fn start_with_default_options_returns_guard() {
@@ -125,6 +128,49 @@ fn concurrent_start_only_one_thread_wins() {
         .count();
     assert_eq!(ok_count, 1, "exactly one start() must succeed");
     assert_eq!(err_count, N - 1, "all others must report AlreadyStarted");
+}
+
+#[test]
+#[should_panic(expected = "insomnilog: call insomnilog::start() before using the logger")]
+fn register_sink_panics_when_backend_not_started() {
+    // Each test runs in its own process under nextest, so the OnceLock is
+    // unset here regardless of test ordering.
+    let _ = register_sink("console", Arc::new(NullSink::new(LogLevel::Info)));
+}
+
+#[test]
+#[should_panic(expected = "insomnilog: call insomnilog::start() before using the logger")]
+fn get_sink_panics_when_backend_not_started() {
+    let _ = get_sink("console");
+}
+
+#[test]
+fn register_sink_after_start_inserts_the_sink() {
+    let _guard = start(BackendOptions::default()).expect("start should succeed");
+    register_sink("console", Arc::new(NullSink::new(LogLevel::Warning)))
+        .expect("first registration must succeed");
+    assert_eq!(
+        get_sink("console").expect("must be retrievable").level(),
+        LogLevel::Warning,
+    );
+}
+
+#[test]
+fn get_sink_returns_registered_sink_after_start() {
+    let _guard = start(BackendOptions::default()).expect("start should succeed");
+    let sink: Arc<dyn Sink> = Arc::new(NullSink::new(LogLevel::Info));
+    register_sink("console", Arc::clone(&sink)).expect("first registration must succeed");
+    let fetched = get_sink("console").expect("registered sink must be retrievable");
+    assert!(Arc::ptr_eq(&sink, &fetched));
+
+    // A second registration under the same name is an explicit error.
+    let err = register_sink("console", Arc::new(NullSink::new(LogLevel::Error)))
+        .expect_err("duplicate registration must fail");
+    assert!(
+        Arc::ptr_eq(&sink, &err.existing),
+        "error must carry the originally registered Arc",
+    );
+    assert_eq!(err.existing.level(), LogLevel::Info);
 }
 
 #[test]
