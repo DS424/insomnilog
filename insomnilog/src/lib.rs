@@ -16,7 +16,8 @@ mod sink;
 #[cfg(test)]
 pub(crate) mod testutil;
 
-pub use backend::BackendOptions;
+pub use backend::{BackendOptions, SinkAlreadyRegistered};
 pub use formatter::{Formatter, InvalidPatternError, PatternFormatter};
-pub use lifecycle::{AlreadyStarted, ShutdownGuard, shutdown, start};
+pub use level::LogLevel;
+pub use lifecycle::{AlreadyStarted, ShutdownGuard, get_sink, register_sink, shutdown, start};
 pub use sink::{ConsoleSink, NullSink, Sink};

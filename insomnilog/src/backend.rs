@@ -4,11 +4,38 @@
 //! stored in a `OnceLock`. It owns a dedicated thread that idles until
 //! [`Backend::shutdown`] is called.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::PoisonError;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+use crate::sink::Sink;
+
+/// Error returned by `create_sink` when a sink is already registered under
+/// the given name.
+pub struct SinkAlreadyRegistered {
+    /// The sink that was registered under the name before this call.
+    pub existing: Arc<dyn Sink>,
+}
+
+impl std::fmt::Debug for SinkAlreadyRegistered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SinkAlreadyRegistered")
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for SinkAlreadyRegistered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a sink with this name is already registered")
+    }
+}
+
+impl std::error::Error for SinkAlreadyRegistered {}
 
 /// Configuration for the backend worker thread.
 #[derive(Debug, Clone)]
@@ -50,6 +77,11 @@ pub struct Backend {
         reason = "fields read by the worker loop once it is wired up"
     )]
     options: BackendOptions,
+    /// Named registry of sinks. Holds strong `Arc<dyn Sink>` for the process
+    /// lifetime. Lookups go through `RwLock::read`; insertions go through
+    /// `RwLock::write` so concurrent `register_sink` calls with the same name
+    /// are serialized and exactly one wins.
+    sinks: RwLock<HashMap<String, Arc<dyn Sink>>>,
     /// Set to `true` by [`Self::shutdown`]. The worker thread observes this
     /// with `Acquire` and exits when it transitions to `true`.
     shutdown_flag: Arc<AtomicBool>,
@@ -76,9 +108,48 @@ impl Backend {
             .expect("OS should be able to spawn a thread");
         Self {
             options,
+            sinks: RwLock::new(HashMap::new()),
             shutdown_flag,
             worker: Mutex::new(Some(handle)),
         }
+    }
+
+    /// Returns the sink registered under `name`, if any.
+    ///
+    /// One `Arc::clone` per call (atomic refcount bump); no `Weak::upgrade`,
+    /// no branch for dead entries — registered sinks live for the process
+    /// lifetime.
+    pub fn get_sink(&self, name: &str) -> Option<Arc<dyn Sink>> {
+        self.sinks
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned()
+    }
+
+    /// Registers `sink` under `name`.
+    ///
+    /// Returns <code>Err([SinkAlreadyRegistered])</code> if a sink is already
+    /// registered under `name`. The error carries the existing `Arc` so the
+    /// caller can inspect or compare it.
+    ///
+    /// The write lock is held across the lookup-and-insert, so concurrent
+    /// callers with the same `name` are serialized: exactly one wins and the
+    /// rest receive `Err`.
+    pub fn register_sink(
+        &self,
+        name: &str,
+        sink: Arc<dyn Sink>,
+    ) -> Result<(), SinkAlreadyRegistered> {
+        let mut map = self.sinks.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(existing) = map.get(name) {
+            return Err(SinkAlreadyRegistered {
+                existing: Arc::clone(existing),
+            });
+        }
+        map.insert(name.to_owned(), sink);
+        drop(map);
+        Ok(())
     }
 
     /// Signals the worker to stop and joins it. Idempotent: a second call
@@ -88,7 +159,7 @@ impl Backend {
         let handle = self
             .worker
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
         if let Some(handle) = handle {
             // Best-effort join. A panicking worker is contained here so the
@@ -107,7 +178,20 @@ fn worker_loop(shutdown: &AtomicBool, idle_sleep: Duration) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+
     use super::*;
+    use crate::level::LogLevel;
+    use crate::sink::NullSink;
+
+    fn shutdown_after<F>(opts: BackendOptions, body: F)
+    where
+        F: FnOnce(&Backend),
+    {
+        let backend = Backend::start(opts);
+        body(&backend);
+        backend.shutdown();
+    }
 
     #[test]
     fn default_options_match_legacy_constants() {
@@ -128,7 +212,7 @@ mod tests {
             backend
                 .worker
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .unwrap_or_else(PoisonError::into_inner)
                 .is_none(),
         );
     }
@@ -149,10 +233,152 @@ mod tests {
         let name = backend
             .worker
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             .and_then(|h| h.thread().name().map(str::to_owned));
         backend.shutdown();
         assert_eq!(name.as_deref(), Some("my-custom-thread"));
+    }
+
+    #[test]
+    fn sink_registry_is_initially_empty() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            assert!(backend.get_sink("anything").is_none());
+        });
+    }
+
+    #[test]
+    fn register_sink_succeeds_on_first_call() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            backend
+                .register_sink("console", Arc::new(NullSink::new(LogLevel::Info)))
+                .expect("first registration must succeed");
+            assert_eq!(
+                backend
+                    .get_sink("console")
+                    .expect("must be retrievable")
+                    .level(),
+                LogLevel::Info,
+            );
+        });
+    }
+
+    #[test]
+    fn register_sink_returns_error_on_duplicate_name() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let first: Arc<dyn Sink> = Arc::new(NullSink::new(LogLevel::Info));
+            backend
+                .register_sink("console", Arc::clone(&first))
+                .expect("first registration must succeed");
+
+            let err = backend
+                .register_sink("console", Arc::new(NullSink::new(LogLevel::Error)))
+                .expect_err("second registration under same name must fail");
+
+            assert!(
+                Arc::ptr_eq(&first, &err.existing),
+                "error must carry the originally registered Arc",
+            );
+            assert_eq!(
+                err.existing.level(),
+                LogLevel::Info,
+                "existing sink must be unchanged"
+            );
+        });
+    }
+
+    #[test]
+    fn get_sink_returns_registered_sink() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let sink: Arc<dyn Sink> = Arc::new(NullSink::new(LogLevel::Warning));
+            backend
+                .register_sink("console", Arc::clone(&sink))
+                .expect("registration must succeed");
+            let fetched = backend
+                .get_sink("console")
+                .expect("registered sink must be retrievable");
+            assert!(Arc::ptr_eq(&sink, &fetched));
+        });
+    }
+
+    #[test]
+    fn distinct_names_produce_distinct_sinks() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let a: Arc<dyn Sink> = Arc::new(NullSink::new(LogLevel::Info));
+            let b: Arc<dyn Sink> = Arc::new(NullSink::new(LogLevel::Error));
+            backend
+                .register_sink("a", Arc::clone(&a))
+                .expect("registration must succeed");
+            backend
+                .register_sink("b", Arc::clone(&b))
+                .expect("registration must succeed");
+            assert!(!Arc::ptr_eq(&a, &b));
+            assert_eq!(a.level(), LogLevel::Info);
+            assert_eq!(b.level(), LogLevel::Error);
+        });
+    }
+
+    #[test]
+    fn registry_pins_sink_when_caller_drops_arc() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let initial: Arc<dyn Sink> = Arc::new(NullSink::new(LogLevel::Debug));
+            backend
+                .register_sink("pinned", Arc::clone(&initial))
+                .expect("registration must succeed");
+            assert!(
+                Arc::strong_count(&initial) >= 2,
+                "registry + caller must each hold a strong Arc",
+            );
+            drop(initial);
+
+            let after_drop = backend
+                .get_sink("pinned")
+                .expect("registry must still hold the sink");
+            assert_eq!(after_drop.level(), LogLevel::Debug);
+        });
+    }
+
+    #[test]
+    fn concurrent_register_sink_exactly_one_wins() {
+        const N: usize = 8;
+
+        let backend = Arc::new(Backend::start(BackendOptions::default()));
+        let barrier = Arc::new(Barrier::new(N));
+
+        #[expect(
+            clippy::needless_collect,
+            reason = "all threads must spawn before any joins; \
+                      a lazy chain would deadlock on the Barrier"
+        )]
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                let backend = Arc::clone(&backend);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    backend.register_sink("contested", Arc::new(NullSink::new(LogLevel::Info)))
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().expect("worker thread must not panic"))
+            .collect();
+
+        let wins = results.iter().filter(|r| r.is_ok()).count();
+
+        let registered = backend
+            .get_sink("contested")
+            .expect("winning registration must be retrievable");
+        backend.shutdown();
+
+        assert_eq!(wins, 1, "exactly one thread must win the race");
+        for result in results.iter().filter_map(|r| r.as_ref().err()) {
+            assert!(
+                Arc::ptr_eq(&registered, &result.existing),
+                "all losers must report the winning Arc as existing",
+            );
+        }
     }
 }

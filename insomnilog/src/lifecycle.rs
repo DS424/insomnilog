@@ -1,9 +1,15 @@
 //! Process-wide backend lifecycle: [`start`], [`shutdown`], and their guards.
 
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::backend;
+use crate::sink::Sink;
+
+/// Panic message produced by [`get_sink`] / [`create_sink`] (and the
+/// macros, in later steps) when called before [`start`].
+const NOT_STARTED_PANIC: &str = "insomnilog: call insomnilog::start() before using the logger";
 
 /// Error returned by [`start`] when the backend has already been initialised
 /// in this process.
@@ -91,4 +97,37 @@ pub fn shutdown() {
     if let Some(backend) = BACKEND.get() {
         backend.shutdown();
     }
+}
+
+/// Returns the sink registered under `name`, if any.
+///
+/// # Panics
+///
+/// Panics if [`start`] has not been called in this process.
+#[must_use]
+pub fn get_sink(name: &str) -> Option<Arc<dyn Sink>> {
+    BACKEND.get().expect(NOT_STARTED_PANIC).get_sink(name)
+}
+
+/// Registers `sink` under `name`.
+///
+/// The error carries the existing `Arc` so the caller can inspect or compare
+/// it.
+///
+/// # Errors
+///
+/// Returns <code>Err([`backend::SinkAlreadyRegistered`])</code> if a sink is
+/// already registered under `name`.
+///
+/// # Panics
+///
+/// Panics if [`start`] has not been called in this process.
+pub fn register_sink(
+    name: &str,
+    sink: Arc<dyn Sink>,
+) -> Result<(), backend::SinkAlreadyRegistered> {
+    BACKEND
+        .get()
+        .expect(NOT_STARTED_PANIC)
+        .register_sink(name, sink)
 }
