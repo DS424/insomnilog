@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::PoisonError;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -88,6 +89,14 @@ pub struct Backend {
     /// Worker thread join handle. `take`n by [`Self::shutdown`] so a second
     /// call is a no-op.
     worker: Mutex<Option<JoinHandle<()>>>,
+    /// Total number of [`Sink::write_record`] calls that returned `Err` across
+    /// all sinks. Incremented by the worker loop; read at shutdown for the
+    /// error summary.
+    write_errors: AtomicU64,
+    /// Total number of [`Sink::flush`] calls that returned `Err` across all
+    /// sinks. Incremented by the worker loop; read at shutdown for the error
+    /// summary.
+    flush_errors: AtomicU64,
 }
 
 impl Backend {
@@ -111,6 +120,8 @@ impl Backend {
             sinks: RwLock::new(HashMap::new()),
             shutdown_flag,
             worker: Mutex::new(Some(handle)),
+            write_errors: AtomicU64::new(0),
+            flush_errors: AtomicU64::new(0),
         }
     }
 
@@ -154,6 +165,9 @@ impl Backend {
 
     /// Signals the worker to stop and joins it. Idempotent: a second call
     /// finds the join handle already taken and returns immediately.
+    ///
+    /// Prints a summary to stderr if any sink errors were recorded during
+    /// this session.
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::Release);
         let handle = self
@@ -166,6 +180,33 @@ impl Backend {
             // shutdown path itself stays panic-free.
             let _ = handle.join();
         }
+        let write_errors = self.write_errors.load(Ordering::Relaxed);
+        let flush_errors = self.flush_errors.load(Ordering::Relaxed);
+        if write_errors > 0 || flush_errors > 0 {
+            eprintln!(
+                "insomnilog: sink errors at shutdown — write_record: {write_errors}, flush: {flush_errors}"
+            );
+        }
+    }
+
+    /// Increments the write-error counter. Called by the worker loop when a
+    /// sink's [`crate::sink::Sink::write_record`] returns `Err`.
+    #[expect(
+        dead_code,
+        reason = "called by the worker loop once sink dispatch is wired"
+    )]
+    pub(crate) fn record_write_error(&self) {
+        self.write_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the flush-error counter. Called by the worker loop when a
+    /// sink's [`crate::sink::Sink::flush`] returns `Err`.
+    #[expect(
+        dead_code,
+        reason = "called by the worker loop once sink dispatch is wired"
+    )]
+    pub(crate) fn record_flush_error(&self) {
+        self.flush_errors.fetch_add(1, Ordering::Relaxed);
     }
 }
 
