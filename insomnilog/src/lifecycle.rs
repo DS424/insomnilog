@@ -5,6 +5,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::backend;
+use crate::level::LogLevel;
+use crate::logger::Logger;
 use crate::sink::Sink;
 
 /// Panic message produced by [`get_sink`] / [`create_sink`] (and the
@@ -130,4 +132,42 @@ pub fn register_sink(
         .get()
         .expect(NOT_STARTED_PANIC)
         .register_sink(name, sink)
+}
+
+/// Returns the logger registered under `name`, if any.
+///
+/// # Panics
+///
+/// Panics if [`start`] has not been called in this process.
+#[must_use]
+pub fn get_logger(name: &str) -> Option<Arc<Logger>> {
+    BACKEND.get().expect(NOT_STARTED_PANIC).get_logger(name)
+}
+
+/// Creates a new logger under `name` with the given `sinks` and `level`.
+///
+/// **`level` gates emission for every sink.** The producer-side check against
+/// `level` runs on the macro hot path before any sink sees the record,
+/// so a sink configured *more permissive* than this logger never receives the
+/// difference. The effective level for any sink is
+/// `max(logger.level, sink.level)`. To get more output, lower this `level`,
+/// not the sink's.
+///
+/// # Errors
+///
+/// Returns <code>Err([crate::LoggerAlreadyRegistered])</code> if a logger is already
+/// registered under `name`. The error carries the existing `Arc<Logger>`.
+///
+/// # Panics
+///
+/// Panics if [`start`] has not been called in this process.
+pub fn create_logger(
+    name: &str,
+    sinks: Vec<Arc<dyn Sink>>,
+    level: LogLevel,
+) -> Result<Arc<Logger>, crate::LoggerAlreadyRegistered> {
+    BACKEND
+        .get()
+        .expect(NOT_STARTED_PANIC)
+        .create_logger(name, sinks, level)
 }
