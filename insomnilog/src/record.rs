@@ -6,12 +6,19 @@
 use core::ptr;
 
 /// The binary record header written at the start of each log entry in the queue.
+///
+/// `logger_ptr` carries the per-record logger identity so the backend can fan
+/// out to the right `Sink` list without consulting any registry on the
+/// dispatch path. Lifetime safety comes from the `LoggerRegistry` holding a
+/// strong `Arc<Logger>` for the process lifetime.
 #[repr(C)]
 pub struct RecordHeader {
     /// Nanoseconds since UNIX epoch.
     pub timestamp_ns: u64,
     /// Pointer to the static `LogMetadata` for this callsite.
     pub metadata_ptr: usize,
+    /// Pointer to the `Logger` whose macro produced this record.
+    pub logger_ptr: usize,
     /// Total size in bytes of the encoded arguments that follow.
     pub encoded_args_size: u32,
     /// Padding to bring the struct to a multiple of 8 bytes.
@@ -23,10 +30,16 @@ impl RecordHeader {
     pub const SIZE: usize = size_of::<Self>();
 
     /// Constructs a new [`RecordHeader`], always zeroing the padding field.
-    pub const fn new(timestamp_ns: u64, metadata_ptr: usize, encoded_args_size: u32) -> Self {
+    pub const fn new(
+        timestamp_ns: u64,
+        metadata_ptr: usize,
+        logger_ptr: usize,
+        encoded_args_size: u32,
+    ) -> Self {
         Self {
             timestamp_ns,
             metadata_ptr,
+            logger_ptr,
             encoded_args_size,
             padding: 0,
         }
@@ -54,26 +67,32 @@ mod tests {
 
     #[test]
     fn new_sets_timestamp_ns() {
-        let h = RecordHeader::new(123_456_789, 0, 0);
+        let h = RecordHeader::new(123_456_789, 0, 0, 0);
         assert_eq!(h.timestamp_ns, 123_456_789);
     }
 
     #[test]
     fn new_sets_metadata_ptr() {
-        let h = RecordHeader::new(0, 0xDEAD_BEEF, 0);
+        let h = RecordHeader::new(0, 0xDEAD_BEEF, 0, 0);
         assert_eq!(h.metadata_ptr, 0xDEAD_BEEF);
     }
 
     #[test]
+    fn new_sets_logger_ptr() {
+        let h = RecordHeader::new(0, 0, 0xCAFE_BABE, 0);
+        assert_eq!(h.logger_ptr, 0xCAFE_BABE);
+    }
+
+    #[test]
     fn new_sets_encoded_args_size() {
-        let h = RecordHeader::new(0, 0, 42);
+        let h = RecordHeader::new(0, 0, 0, 42);
         assert_eq!(h.encoded_args_size, 42);
     }
 
     #[test]
     fn new_padding_is_always_zero() {
         // Even when every other field is at its maximum value.
-        let h = RecordHeader::new(u64::MAX, usize::MAX, u32::MAX);
+        let h = RecordHeader::new(u64::MAX, usize::MAX, usize::MAX, u32::MAX);
         assert_eq!(h.padding, 0);
     }
 
@@ -84,7 +103,7 @@ mod tests {
 
     #[test]
     fn write_to_roundtrip() {
-        let original = RecordHeader::new(987_654_321, 0x1234_5678, 64);
+        let original = RecordHeader::new(987_654_321, 0x1234_5678, 0xABCD_EF01, 64);
         let mut buf = [0u8; RecordHeader::SIZE];
         // SAFETY: buf is exactly SIZE bytes.
         unsafe { original.write_to(buf.as_mut_ptr()) };
@@ -92,6 +111,7 @@ mod tests {
         let recovered = unsafe { ptr::read_unaligned(buf.as_ptr().cast::<RecordHeader>()) };
         assert_eq!(recovered.timestamp_ns, original.timestamp_ns);
         assert_eq!(recovered.metadata_ptr, original.metadata_ptr);
+        assert_eq!(recovered.logger_ptr, original.logger_ptr);
         assert_eq!(recovered.encoded_args_size, original.encoded_args_size);
         assert_eq!(recovered.padding, 0);
     }
@@ -99,7 +119,7 @@ mod tests {
     #[test]
     fn write_to_writes_exactly_size_bytes() {
         // Sentinel bytes placed immediately after SIZE must not be touched.
-        let header = RecordHeader::new(1, 2, 3);
+        let header = RecordHeader::new(1, 2, 3, 4);
         let mut buf = [0xFF_u8; RecordHeader::SIZE + 2];
         // SAFETY: buf has SIZE + 2 bytes, so SIZE bytes from the start are valid.
         unsafe { header.write_to(buf.as_mut_ptr()) };
