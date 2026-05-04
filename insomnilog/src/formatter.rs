@@ -1,14 +1,14 @@
 //! Log record formatting.
 //!
 //! Defines the [`Formatter`] trait — the contract a text-producing sink uses
-//! to turn a [`DecodedRecord`] into output bytes — and provides a default
+//! to turn a [`LogRecord`] into output bytes — and provides a default
 //! [`PatternFormatter`] implementation.
 //!
 //! ## Pattern format string
 //!
 //! `PatternFormatter` is configured with a pattern string containing named
 //! `{field}` placeholders. Each placeholder is replaced at format time with
-//! the corresponding value from the [`DecodedRecord`]. An optional format
+//! the corresponding value from the [`LogRecord`]. An optional format
 //! spec after a colon controls padding: `{field:spec}`.
 //!
 //! ### Fields
@@ -21,6 +21,7 @@
 //! | `{file}` | Source file name |
 //! | `{line}` | Source line number |
 //! | `{module}` | Module path |
+//! | `{logger}` | Name of the logger that emitted the record |
 //! | `{message}` | Formatted message with positional `{}` arguments substituted |
 //!
 //! ### Format spec
@@ -59,9 +60,9 @@
 
 use core::fmt::Write;
 
-use crate::decode::{DecodedArg, DecodedRecord};
+use crate::decode::{DecodedArg, LogRecord};
 
-/// Renders a `DecodedRecord` into human-readable bytes for a text sink.
+/// Renders a `LogRecord` into human-readable bytes for a text sink.
 ///
 /// Implementations must be [`Send`] and [`Sync`] because a single formatter
 /// is shared by the backend worker thread and may also be referenced from
@@ -73,7 +74,7 @@ use crate::decode::{DecodedArg, DecodedRecord};
 /// record with a prefix or suffix.
 pub trait Formatter: Send + Sync {
     /// Appends a rendering of `record` to `out`.
-    fn format(&self, record: &DecodedRecord, out: &mut String);
+    fn format(&self, record: &LogRecord, out: &mut String);
 }
 
 /// Returned by [`PatternFormatter::new`] when the pattern string is invalid.
@@ -93,7 +94,7 @@ impl core::fmt::Display for InvalidPatternError {
             Self::UnknownField(name) => write!(
                 f,
                 "unknown pattern field \"{name}\"; \
-                 known fields: level, secs, millis, file, line, module, message",
+                 known fields: level, secs, millis, file, line, module, logger, message",
             ),
             Self::UnclosedBrace => f.write_str("unclosed '{' in pattern string"),
             Self::InvalidFormatSpec(spec) => write!(
@@ -141,7 +142,7 @@ impl Default for FormatSpec {
     }
 }
 
-/// Which [`DecodedRecord`] field a pattern placeholder maps to.
+/// Which [`LogRecord`] field a pattern placeholder maps to.
 #[derive(Debug, Clone, Copy)]
 enum FieldKind {
     /// The record's log level.
@@ -156,6 +157,8 @@ enum FieldKind {
     Line,
     /// Module path.
     Module,
+    /// Name of the logger that emitted the record.
+    Logger,
     /// Fully formatted message (fmt string + positional args).
     Message,
 }
@@ -225,7 +228,7 @@ impl Default for PatternFormatter {
 }
 
 impl Formatter for PatternFormatter {
-    fn format(&self, record: &DecodedRecord, out: &mut String) {
+    fn format(&self, record: &LogRecord, out: &mut String) {
         let secs = record.timestamp_ns / 1_000_000_000;
         let millis = (record.timestamp_ns % 1_000_000_000) / 1_000_000;
 
@@ -242,7 +245,7 @@ impl Formatter for PatternFormatter {
 }
 
 /// Renders a single field value into an owned `String` before padding is applied.
-fn render_field(kind: FieldKind, record: &DecodedRecord, secs: u64, millis: u64) -> String {
+fn render_field(kind: FieldKind, record: &LogRecord, secs: u64, millis: u64) -> String {
     let mut s = String::new();
     match kind {
         FieldKind::Level => {
@@ -259,6 +262,7 @@ fn render_field(kind: FieldKind, record: &DecodedRecord, secs: u64, millis: u64)
             let _ = write!(s, "{}", record.metadata.line);
         }
         FieldKind::Module => s.push_str(record.metadata.module_path),
+        FieldKind::Logger => s.push_str(&record.logger_name),
         FieldKind::Message => {
             format_message(&mut s, record.metadata.fmt_str, &record.args);
         }
@@ -314,6 +318,7 @@ fn parse_field_kind(name: &str) -> Result<FieldKind, InvalidPatternError> {
         "file" => Ok(FieldKind::File),
         "line" => Ok(FieldKind::Line),
         "module" => Ok(FieldKind::Module),
+        "logger" => Ok(FieldKind::Logger),
         "message" => Ok(FieldKind::Message),
         other => Err(InvalidPatternError::UnknownField(other.to_owned())),
     }
@@ -454,7 +459,7 @@ fn format_message(buf: &mut String, fmt_str: &str, args: &[DecodedArg]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{DecodedArg, DecodedRecord};
+    use crate::decode::{DecodedArg, LogRecord};
     use crate::level::LogLevel;
     use crate::metadata::LogMetadata;
 
@@ -521,23 +526,25 @@ mod tests {
         arg_count: 3,
     };
 
-    fn bare(meta: &'static LogMetadata) -> DecodedRecord {
-        DecodedRecord {
+    fn bare(meta: &'static LogMetadata) -> LogRecord {
+        LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: meta,
             args: vec![],
         }
     }
 
-    fn with_ts(meta: &'static LogMetadata, ts_ns: u64) -> DecodedRecord {
-        DecodedRecord {
+    fn with_ts(meta: &'static LogMetadata, ts_ns: u64) -> LogRecord {
+        LogRecord {
             timestamp_ns: ts_ns,
+            logger_name: "test".to_owned(),
             metadata: meta,
             args: vec![],
         }
     }
 
-    fn fmt(pattern: &str, record: &DecodedRecord) -> String {
+    fn fmt(pattern: &str, record: &LogRecord) -> String {
         let f = PatternFormatter::new(pattern).expect("valid pattern");
         let mut out = String::new();
         f.format(record, &mut out);
@@ -728,8 +735,9 @@ mod tests {
 
     #[test]
     fn pattern_format_basic_with_args() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 1_700_000_000_123_000_000,
+            logger_name: "test".to_owned(),
             metadata: &FMT_TWO,
             args: vec![DecodedArg::Str("alice".to_owned()), DecodedArg::U64(99)],
         };
@@ -740,8 +748,9 @@ mod tests {
 
     #[test]
     fn pattern_format_no_args() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &FMT_NONE,
             args: vec![],
         };
@@ -754,8 +763,9 @@ mod tests {
     fn pattern_format_pads_millis_to_three_digits() {
         // 5 s + 7 ms → millis component rendered as "007" via {:03} in the
         // default pattern.
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 5_007_000_000,
+            logger_name: "test".to_owned(),
             metadata: &FMT_NONE,
             args: vec![],
         };
@@ -766,8 +776,9 @@ mod tests {
 
     #[test]
     fn pattern_format_renders_seconds_and_millis_from_full_timestamp() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 1_700_000_000_456_000_000,
+            logger_name: "test".to_owned(),
             metadata: &FMT_NONE,
             args: vec![],
         };
@@ -778,8 +789,9 @@ mod tests {
 
     #[test]
     fn pattern_format_extra_placeholders_left_as_is() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &FMT_THREE_PLACEHOLDERS,
             args: vec![DecodedArg::U32(7)],
         };
@@ -790,8 +802,9 @@ mod tests {
 
     #[test]
     fn pattern_format_extra_args_ignored() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &FMT_ONE,
             args: vec![
                 DecodedArg::U32(7),
@@ -807,8 +820,9 @@ mod tests {
 
     #[test]
     fn pattern_format_brace_without_close_is_literal() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &FMT_LITERAL_BRACE,
             args: vec![DecodedArg::U32(3)],
         };
@@ -819,8 +833,9 @@ mod tests {
 
     #[test]
     fn pattern_format_appends_to_existing_buffer() {
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &FMT_NONE,
             args: vec![],
         };
@@ -840,8 +855,9 @@ mod tests {
             module_path: "test",
             arg_count: 6,
         };
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &META,
             args: vec![
                 DecodedArg::I64(-42),
@@ -862,23 +878,57 @@ mod tests {
 
     #[test]
     fn pattern_format_custom_pattern_all_fields() {
-        let f = PatternFormatter::new("{level}|{secs}|{millis}|{file}|{line}|{module}|{message}")
-            .unwrap();
-        let r = DecodedRecord {
+        let f = PatternFormatter::new(
+            "{level}|{secs}|{millis}|{file}|{line}|{module}|{logger}|{message}",
+        )
+        .unwrap();
+        let r = LogRecord {
             timestamp_ns: 2_001_000_000,
+            logger_name: "payments".to_owned(),
             metadata: &FMT_ONE,
             args: vec![DecodedArg::U32(42)],
         };
         let mut out = String::new();
         f.format(&r, &mut out);
-        assert_eq!(out, "INFO|2|1|f.rs|0|test|x=42");
+        assert_eq!(out, "INFO|2|1|f.rs|0|test|payments|x=42");
+    }
+
+    #[test]
+    fn pattern_format_logger_field_renders_name() {
+        let r = LogRecord {
+            timestamp_ns: 0,
+            logger_name: "payments".to_owned(),
+            metadata: &META_INFO,
+            args: vec![],
+        };
+        assert_eq!(fmt("{logger}", &r), "payments");
+    }
+
+    #[test]
+    fn pattern_format_logger_field_pads_left() {
+        let r = LogRecord {
+            timestamp_ns: 0,
+            logger_name: "app".to_owned(),
+            metadata: &META_INFO,
+            args: vec![],
+        };
+        assert_eq!(fmt("{logger:<10}", &r), "app       ");
+    }
+
+    #[test]
+    fn new_rejects_unknown_field_logger_typo() {
+        assert!(matches!(
+            PatternFormatter::new("{loggerr}"),
+            Err(InvalidPatternError::UnknownField(ref s)) if s == "loggerr"
+        ));
     }
 
     #[test]
     fn pattern_format_custom_pattern_literal_text() {
         let f = PatternFormatter::new("level={level} msg={message}").unwrap();
-        let r = DecodedRecord {
+        let r = LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &FMT_NONE,
             args: vec![],
         };
