@@ -1,7 +1,7 @@
 //! Output sinks for log records.
 //!
 //! Defines the [`Sink`] trait — the contract a sink uses to receive a
-//! [`DecodedRecord`] from the backend worker — and provides a default
+//! [`LogRecord`] from the backend worker — and provides a default
 //! [`ConsoleSink`] that composes a [`Formatter`] with a buffered stdout
 //! writer.
 
@@ -14,7 +14,7 @@ use std::fmt;
 use std::io::{self, BufWriter, Stdout, Write};
 use std::sync::{Mutex, PoisonError};
 
-use crate::decode::DecodedRecord;
+use crate::decode::LogRecord;
 use crate::formatter::Formatter;
 use crate::level::LogLevel;
 
@@ -71,7 +71,7 @@ impl From<io::Error> for SinkError {
     }
 }
 
-/// Receives `DecodedRecord`s from the backend worker and decides their
+/// Receives `LogRecord`s from the backend worker and decides their
 /// output shape.
 ///
 /// Implementations must be [`Send`] and [`Sync`] because a single sink is
@@ -88,7 +88,7 @@ impl From<io::Error> for SinkError {
 /// difference. To get more output through a sink, lower the logger's level,
 /// not the sink's.
 pub trait Sink: Send + Sync {
-    /// Processes a decoded record. Called by the backend worker once per
+    /// Processes a log record. Called by the backend worker once per
     /// record, after the worker confirms `self.level() <= record.level`.
     ///
     /// # Errors
@@ -96,7 +96,7 @@ pub trait Sink: Send + Sync {
     /// Returns a `SinkError` if the record could not be written. The backend
     /// counts these errors and reports them at shutdown; it never propagates
     /// them to the caller.
-    fn write_record(&self, record: &DecodedRecord) -> Result<(), SinkError>;
+    fn write_record(&self, record: &LogRecord) -> Result<(), SinkError>;
 
     /// Flushes any buffered output. Called by the worker after each batch
     /// of records and at shutdown.
@@ -134,7 +134,7 @@ struct ConsoleState<W: Write> {
 /// [`ConsoleSink::new`] produces. Use [`ConsoleSink::with_writer`] to supply
 /// an alternative destination (e.g. a `Vec<u8>` in tests).
 pub struct ConsoleSink<F: Formatter, W: Write = BufWriter<Stdout>> {
-    /// Renders [`DecodedRecord`]s into the scratch buffer.
+    /// Renders [`LogRecord`]s into the scratch buffer.
     formatter: F,
     /// Filter level, fixed at construction (no atomic, no `set_level`).
     level: LogLevel,
@@ -179,7 +179,7 @@ impl<F: Formatter, W: Write + Send> Sink for ConsoleSink<F, W> {
         reason = "the lock must cover format + write_all so concurrent \
                   ConsoleSinks don't interleave bytes mid-line"
     )]
-    fn write_record(&self, record: &DecodedRecord) -> Result<(), SinkError> {
+    fn write_record(&self, record: &LogRecord) -> Result<(), SinkError> {
         let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         // Destructure so the formatter's `&mut scratch` and the writer's
         // `&mut self` borrows don't collide through MutexGuard's Deref.
@@ -220,7 +220,7 @@ impl NullSink {
 }
 
 impl Sink for NullSink {
-    fn write_record(&self, _record: &DecodedRecord) -> Result<(), SinkError> {
+    fn write_record(&self, _record: &LogRecord) -> Result<(), SinkError> {
         Ok(())
     }
 
@@ -239,7 +239,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::decode::{DecodedArg, DecodedRecord};
+    use crate::decode::{DecodedArg, LogRecord};
     use crate::formatter::PatternFormatter;
     use crate::metadata::LogMetadata;
 
@@ -279,7 +279,7 @@ mod tests {
     }
 
     impl Sink for CountingSink {
-        fn write_record(&self, record: &DecodedRecord) -> Result<(), SinkError> {
+        fn write_record(&self, record: &LogRecord) -> Result<(), SinkError> {
             self.records.fetch_add(1, Ordering::Relaxed);
             self.seen_levels
                 .lock()
@@ -298,9 +298,10 @@ mod tests {
         }
     }
 
-    fn make_record() -> DecodedRecord {
-        DecodedRecord {
+    fn make_record() -> LogRecord {
+        LogRecord {
             timestamp_ns: 0,
+            logger_name: "test".to_owned(),
             metadata: &META,
             args: vec![DecodedArg::U32(7)],
         }
@@ -426,5 +427,18 @@ mod tests {
                 .as_slice(),
             &[LogLevel::Info, LogLevel::Info],
         );
+    }
+
+    #[test]
+    fn log_record_logger_name_is_accessible_from_sink() {
+        // Sinks must be able to read logger_name without any unsafe code.
+        let record = LogRecord {
+            timestamp_ns: 0,
+            logger_name: "payments".to_owned(),
+            metadata: &META,
+            args: vec![],
+        };
+        // A sink can branch on or include the logger name in its output.
+        assert_eq!(record.logger_name, "payments");
     }
 }

@@ -60,7 +60,7 @@ pub enum DecodedArg {
     Usize(u64),
     /// Decoded `isize` (stored as `i64`).
     Isize(i64),
-    /// Decoded user-defined type: the output of its [`Decoder`] function,
+    /// Decoded user-defined type: the output of its `Decoder` function,
     /// eagerly formatted into an owned `String` at decode time.
     Custom(String),
 }
@@ -180,10 +180,36 @@ fn decode_custom(data: &[u8]) -> Result<(DecodedArg, usize), DecodeError> {
     Ok((DecodedArg::Custom(out), 1 + ptr_size + 4 + payload_len))
 }
 
-/// A fully decoded log record ready for formatting.
-pub struct DecodedRecord {
+/// Raw output of [`decode_record`]: a faithful byte-level translation of one
+/// queue entry. Only the backend uses this type; sinks receive [`LogRecord`].
+///
+/// Since Sinks use some kind of record in their interface, two record types have to be used
+/// to avoid a circular dependency. The `logger_ptr` contains the sink and can not be cast directly.
+pub struct RawDecodedRecord {
     /// Timestamp in nanoseconds since UNIX epoch.
     pub timestamp_ns: u64,
+    /// Raw `*const Logger` from the record header. The backend dereferences
+    /// this to look up the logger name and sink list; it is never exposed to
+    /// sinks because they cannot safely dereference it (circular dependency).
+    pub logger_ptr: usize,
+    /// Reference to the static callsite metadata.
+    pub metadata: &'static LogMetadata,
+    /// The decoded argument values.
+    pub args: Vec<DecodedArg>,
+}
+
+/// A fully decoded, enriched log record ready for sink dispatch.
+///
+/// Produced by the backend after it decodes a `RawDecodedRecord` and
+/// resolves the raw logger pointer to a human-readable name. This is the type
+/// sinks and formatters operate on — it contains everything needed to render
+/// a log line without any raw pointer arithmetic.
+pub struct LogRecord {
+    /// Timestamp in nanoseconds since UNIX epoch.
+    pub timestamp_ns: u64,
+    /// Name of the logger that emitted this record, as registered via
+    /// [`crate::create_logger`].
+    pub logger_name: String,
     /// Reference to the static callsite metadata.
     pub metadata: &'static LogMetadata,
     /// The decoded argument values.
@@ -191,6 +217,10 @@ pub struct DecodedRecord {
 }
 
 /// Decodes a complete record (header + arguments) from a contiguous byte slice.
+///
+/// Returns a [`RawDecodedRecord`] preserving the `logger_ptr` as a raw
+/// `usize`. The backend is responsible for resolving that pointer to a logger
+/// name and constructing a [`LogRecord`] before handing data to sinks.
 ///
 /// # Errors
 ///
@@ -201,7 +231,7 @@ pub struct DecodedRecord {
 /// The `metadata_ptr` field in the header must be a valid pointer to a
 /// `&'static LogMetadata`.
 #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
-pub unsafe fn decode_record(data: &[u8]) -> Result<DecodedRecord, DecodeError> {
+pub unsafe fn decode_record(data: &[u8]) -> Result<RawDecodedRecord, DecodeError> {
     if data.len() < RecordHeader::SIZE {
         return Err(DecodeError::BufferTooShort);
     }
@@ -228,8 +258,9 @@ pub unsafe fn decode_record(data: &[u8]) -> Result<DecodedRecord, DecodeError> {
         offset += consumed;
     }
 
-    Ok(DecodedRecord {
+    Ok(RawDecodedRecord {
         timestamp_ns: header.timestamp_ns,
+        logger_ptr: header.logger_ptr,
         metadata,
         args,
     })
@@ -351,7 +382,84 @@ mod tests {
         assert!(decode_one(&buf).is_err());
     }
 
+    use crate::level::LogLevel;
+    use crate::metadata::LogMetadata;
+    use crate::record::RecordHeader;
     use crate::testutil::{Color, Marker, Point2D};
+
+    static TEST_META: LogMetadata = LogMetadata {
+        level: LogLevel::Info,
+        fmt_str: "",
+        file: "f.rs",
+        line: 1,
+        module_path: "m",
+        arg_count: 0,
+    };
+
+    fn make_header_buf(logger_ptr: usize) -> Vec<u8> {
+        let header = RecordHeader::new(
+            42_000_000_000,
+            (&raw const TEST_META) as usize,
+            logger_ptr,
+            0,
+        );
+        let mut buf = vec![0u8; RecordHeader::SIZE];
+        // SAFETY: buf has exactly SIZE bytes.
+        unsafe { header.write_to(buf.as_mut_ptr()) };
+        buf
+    }
+
+    #[test]
+    fn decode_record_preserves_logger_ptr() {
+        let buf = make_header_buf(0xDEAD_BEEF);
+        // SAFETY: TEST_META is a valid static, buf was written by write_to.
+        let raw = unsafe { decode_record(&buf) }.unwrap();
+        assert_eq!(raw.logger_ptr, 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn decode_record_preserves_timestamp_ns() {
+        let buf = make_header_buf(0);
+        let raw = unsafe { decode_record(&buf) }.unwrap();
+        assert_eq!(raw.timestamp_ns, 42_000_000_000);
+    }
+
+    #[test]
+    fn decode_record_empty_args() {
+        let buf = make_header_buf(0);
+        let raw = unsafe { decode_record(&buf) }.unwrap();
+        assert!(raw.args.is_empty());
+    }
+
+    #[test]
+    fn decode_record_too_short_returns_err() {
+        assert!(unsafe { decode_record(&[]) }.is_err());
+        assert!(unsafe { decode_record(&[0u8; RecordHeader::SIZE - 1]) }.is_err());
+    }
+
+    #[test]
+    fn log_record_logger_name_field() {
+        let rec = LogRecord {
+            timestamp_ns: 0,
+            logger_name: "payments".to_owned(),
+            metadata: &TEST_META,
+            args: vec![],
+        };
+        assert_eq!(rec.logger_name, "payments");
+    }
+
+    #[test]
+    fn log_record_fields_match_construction() {
+        let rec = LogRecord {
+            timestamp_ns: 99,
+            logger_name: "app".to_owned(),
+            metadata: &TEST_META,
+            args: vec![DecodedArg::U32(7)],
+        };
+        assert_eq!(rec.timestamp_ns, 99);
+        assert_eq!(rec.metadata.file, "f.rs");
+        assert_eq!(rec.args.len(), 1);
+    }
 
     /// Builds the full wire bytes for a custom argument (tag + fn ptr + len + payload).
     fn pack_custom(decoder: Decoder, payload: &[u8]) -> Vec<u8> {
