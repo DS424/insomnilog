@@ -14,7 +14,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::level::LogLevel;
+use crate::logger::Logger;
 use crate::sink::Sink;
+
+/// Error returned by [`crate::create_logger`] when a logger is already
+/// registered under the given name.
+pub struct LoggerAlreadyRegistered {
+    /// The logger that was registered under the name before this call.
+    pub existing: Arc<Logger>,
+}
+
+impl std::fmt::Debug for LoggerAlreadyRegistered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoggerAlreadyRegistered")
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for LoggerAlreadyRegistered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a logger with this name is already registered")
+    }
+}
+
+impl std::error::Error for LoggerAlreadyRegistered {}
 
 /// Error returned by `create_sink` when a sink is already registered under
 /// the given name.
@@ -83,6 +107,17 @@ pub struct Backend {
     /// `RwLock::write` so concurrent `register_sink` calls with the same name
     /// are serialized and exactly one wins.
     sinks: RwLock<HashMap<String, Arc<dyn Sink>>>,
+    /// Named registry of loggers. Same lifetime + locking model as
+    /// [`Self::sinks`]: strong `Arc<Logger>` for the process lifetime,
+    /// `RwLock::read` for lookups, `RwLock::write` for insertion so
+    /// concurrent `get_or_create_logger` calls with the same name register
+    /// the first construction exactly once.
+    ///
+    /// The registry is the authoritative owner. Once registered, a logger
+    /// outlives every record that references it via `*const Logger` in the
+    /// record header — that lifetime guarantee is what makes the
+    /// raw-pointer dispatch model safe.
+    loggers: RwLock<HashMap<String, Arc<Logger>>>,
     /// Set to `true` by [`Self::shutdown`]. The worker thread observes this
     /// with `Acquire` and exits when it transitions to `true`.
     shutdown_flag: Arc<AtomicBool>,
@@ -118,6 +153,7 @@ impl Backend {
         Self {
             options,
             sinks: RwLock::new(HashMap::new()),
+            loggers: RwLock::new(HashMap::new()),
             shutdown_flag,
             worker: Mutex::new(Some(handle)),
             write_errors: AtomicU64::new(0),
@@ -161,6 +197,46 @@ impl Backend {
         map.insert(name.to_owned(), sink);
         drop(map);
         Ok(())
+    }
+
+    /// Returns the logger registered under `name`, if any.
+    ///
+    /// One `Arc::clone` per call (atomic refcount bump); no `Weak::upgrade`,
+    /// no branch for dead entries — registered loggers live for the process
+    /// lifetime.
+    pub fn get_logger(&self, name: &str) -> Option<Arc<Logger>> {
+        self.loggers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned()
+    }
+
+    /// Creates a new logger under `name` with the given `sinks` and `level`.
+    ///
+    /// Returns <code>Err([LoggerAlreadyRegistered])</code> if a logger is
+    /// already registered under `name`. The error carries the existing `Arc`
+    /// so the caller can inspect or compare it.
+    ///
+    /// The write lock is held across the lookup-and-insert, so concurrent
+    /// callers with the same `name` are serialized: exactly one wins and the
+    /// rest receive `Err`.
+    pub fn create_logger(
+        &self,
+        name: &str,
+        sinks: Vec<Arc<dyn Sink>>,
+        level: LogLevel,
+    ) -> Result<Arc<Logger>, LoggerAlreadyRegistered> {
+        let mut map = self.loggers.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(existing) = map.get(name) {
+            return Err(LoggerAlreadyRegistered {
+                existing: Arc::clone(existing),
+            });
+        }
+        let arc = Arc::new(Logger::new(name.to_owned(), sinks, level));
+        map.insert(name.to_owned(), Arc::clone(&arc));
+        drop(map);
+        Ok(arc)
     }
 
     /// Signals the worker to stop and joins it. Idempotent: a second call
@@ -411,6 +487,157 @@ mod tests {
 
         let registered = backend
             .get_sink("contested")
+            .expect("winning registration must be retrievable");
+        backend.shutdown();
+
+        assert_eq!(wins, 1, "exactly one thread must win the race");
+        for result in results.iter().filter_map(|r| r.as_ref().err()) {
+            assert!(
+                Arc::ptr_eq(&registered, &result.existing),
+                "all losers must report the winning Arc as existing",
+            );
+        }
+    }
+
+    fn null_sink(level: LogLevel) -> Arc<dyn Sink> {
+        Arc::new(NullSink::new(level))
+    }
+
+    #[test]
+    fn logger_registry_is_initially_empty() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            assert!(backend.get_logger("anything").is_none());
+        });
+    }
+
+    #[test]
+    fn create_logger_registers_on_first_call() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let logger = backend
+                .create_logger("app", vec![null_sink(LogLevel::Info)], LogLevel::Warning)
+                .expect("first registration must succeed");
+            assert_eq!(logger.name(), "app");
+            assert_eq!(logger.level(), LogLevel::Warning);
+            assert_eq!(logger.sinks().len(), 1);
+        });
+    }
+
+    #[test]
+    fn create_logger_returns_error_on_collision() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let first = backend
+                .create_logger("app", vec![null_sink(LogLevel::Info)], LogLevel::Info)
+                .expect("first registration must succeed");
+
+            let second_sink = null_sink(LogLevel::Error);
+            let weak = Arc::downgrade(&second_sink);
+            let err = backend
+                .create_logger("app", vec![Arc::clone(&second_sink)], LogLevel::Error)
+                .expect_err("duplicate name must fail");
+            drop(second_sink);
+
+            assert!(
+                Arc::ptr_eq(&first, &err.existing),
+                "error must carry the originally registered Arc",
+            );
+            assert_eq!(
+                err.existing.level(),
+                LogLevel::Info,
+                "existing logger must be unchanged",
+            );
+            assert_eq!(
+                err.existing.sinks().len(),
+                1,
+                "existing sink list must be unchanged",
+            );
+            assert!(
+                weak.upgrade().is_none(),
+                "rejected second-call sink must not be retained anywhere",
+            );
+        });
+    }
+
+    #[test]
+    fn get_logger_returns_registered_logger() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let registered = backend
+                .create_logger("app", Vec::new(), LogLevel::Warning)
+                .expect("first registration must succeed");
+            let fetched = backend
+                .get_logger("app")
+                .expect("registered logger must be retrievable");
+            assert!(Arc::ptr_eq(&registered, &fetched));
+            assert_eq!(fetched.level(), LogLevel::Warning);
+        });
+    }
+
+    #[test]
+    fn distinct_names_produce_distinct_loggers() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let a = backend
+                .create_logger("a", Vec::new(), LogLevel::Info)
+                .expect("registration must succeed");
+            let b = backend
+                .create_logger("b", Vec::new(), LogLevel::Error)
+                .expect("registration must succeed");
+            assert!(!Arc::ptr_eq(&a, &b));
+            assert_eq!(a.name(), "a");
+            assert_eq!(b.name(), "b");
+            assert_eq!(a.level(), LogLevel::Info);
+            assert_eq!(b.level(), LogLevel::Error);
+        });
+    }
+
+    #[test]
+    fn registry_pins_logger_when_caller_drops_arc() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            let initial = backend
+                .create_logger("pinned", Vec::new(), LogLevel::Debug)
+                .expect("first registration must succeed");
+            assert!(
+                Arc::strong_count(&initial) >= 2,
+                "registry + caller must each hold a strong Arc",
+            );
+            drop(initial);
+
+            let after_drop = backend
+                .get_logger("pinned")
+                .expect("registry must still hold the logger");
+            assert_eq!(after_drop.level(), LogLevel::Debug);
+        });
+    }
+
+    #[test]
+    fn concurrent_create_logger_exactly_one_wins() {
+        const N: usize = 8;
+
+        let backend = Arc::new(Backend::start(BackendOptions::default()));
+        let barrier = Arc::new(Barrier::new(N));
+
+        #[expect(
+            clippy::needless_collect,
+            reason = "all threads must spawn before any joins; \
+                      a lazy chain would deadlock on the Barrier"
+        )]
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                let backend = Arc::clone(&backend);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    backend.create_logger("contested", Vec::new(), LogLevel::Info)
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().expect("worker thread must not panic"))
+            .collect();
+
+        let wins = results.iter().filter(|r| r.is_ok()).count();
+        let registered = backend
+            .get_logger("contested")
             .expect("winning registration must be retrievable");
         backend.shutdown();
 

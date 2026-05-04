@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use insomnilog::{
-    AlreadyStarted, BackendOptions, LogLevel, NullSink, ShutdownGuard, Sink, get_sink,
-    register_sink, shutdown, start,
+    AlreadyStarted, BackendOptions, LogLevel, LoggerAlreadyRegistered, NullSink, ShutdownGuard,
+    Sink, create_logger, get_logger, get_sink, register_sink, shutdown, start,
 };
 
 #[test]
@@ -171,6 +171,56 @@ fn get_sink_returns_registered_sink_after_start() {
         "error must carry the originally registered Arc",
     );
     assert_eq!(err.existing.level(), LogLevel::Info);
+}
+
+#[test]
+#[should_panic(expected = "insomnilog: call insomnilog::start() before using the logger")]
+fn create_logger_panics_when_backend_not_started() {
+    let _ = create_logger("app", Vec::new(), LogLevel::Info);
+}
+
+#[test]
+#[should_panic(expected = "insomnilog: call insomnilog::start() before using the logger")]
+fn get_logger_panics_when_backend_not_started() {
+    let _ = get_logger("app");
+}
+
+#[test]
+fn create_logger_after_start_registers_and_returns() {
+    let _guard = start(BackendOptions::default()).expect("start should succeed");
+    let logger = create_logger("app", Vec::new(), LogLevel::Warning)
+        .expect("first registration must succeed");
+    assert_eq!(logger.name(), "app");
+    assert_eq!(logger.level(), LogLevel::Warning);
+}
+
+#[test]
+fn get_logger_returns_registered_logger_after_start() {
+    let _guard = start(BackendOptions::default()).expect("start should succeed");
+    let registered =
+        create_logger("app", Vec::new(), LogLevel::Info).expect("first registration must succeed");
+    let fetched = get_logger("app").expect("registered logger must be retrievable");
+    assert!(Arc::ptr_eq(&registered, &fetched));
+}
+
+#[test]
+fn create_logger_returns_error_on_duplicate_name() {
+    let _guard = start(BackendOptions::default()).expect("start should succeed");
+    let first =
+        create_logger("app", Vec::new(), LogLevel::Info).expect("first registration must succeed");
+
+    let err: LoggerAlreadyRegistered =
+        create_logger("app", Vec::new(), LogLevel::Error).expect_err("duplicate must fail");
+
+    assert!(
+        Arc::ptr_eq(&first, &err.existing),
+        "error must carry the originally registered Arc",
+    );
+    assert_eq!(
+        err.existing.level(),
+        LogLevel::Info,
+        "existing logger must be unchanged",
+    );
 }
 
 #[test]
