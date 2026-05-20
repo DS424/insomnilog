@@ -11,6 +11,7 @@ pub mod legacy;
 mod level;
 mod lifecycle;
 mod logger;
+mod macros;
 mod metadata;
 mod per_thread_queue;
 mod queue;
@@ -29,3 +30,8 @@ pub use lifecycle::{
 };
 pub use logger::Logger;
 pub use sink::{ConsoleSink, NullSink, Sink};
+
+// `#[macro_export]` macros reference `$crate::macros_internal`; re-export it
+// here so the path resolves at the crate root.
+#[doc(hidden)]
+pub use macros::macros_internal;
