@@ -16,6 +16,7 @@ use std::time::Duration;
 use crate::backend_runner::BackendRunner;
 use crate::level::LogLevel;
 use crate::logger::Logger;
+use crate::per_thread_queue::{self, PerThreadProducer};
 use crate::sink::Sink;
 
 /// Error returned by [`crate::create_logger`] when a logger is already
@@ -280,6 +281,46 @@ impl Backend {
     /// other counters is not required.
     pub(crate) fn increment_dropped_records(&self) {
         self.runner.dropped_records.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Returns how many consumers are currently registered.
+    ///
+    /// Intended for test assertions only.
+    #[cfg(test)]
+    pub(crate) fn consumer_count(&self) -> usize {
+        self.runner
+            .consumers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// Registers the calling thread as a logging producer and creates the queue for it
+    ///
+    /// A fresh SPSC queue of `options.queue_capacity` bytes is created; the
+    /// consumer half is stored in [`BackendRunner::consumers`] and the producer
+    /// half is returned to the caller.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called from the backend worker thread itself, which would
+    /// create an infinite loop (the worker would try to drain its own queue
+    /// while inside `write_record`).
+    pub(crate) fn create_producer(&self) -> PerThreadProducer {
+        assert_ne!(
+            thread::current().id(),
+            self.worker_thread_id,
+            "insomnilog: cannot register the backend thread as a producer — \
+             a Sink::write_record impl appears to have called a log macro, \
+             which would loop forever",
+        );
+        let (producer, consumer) = per_thread_queue::new(self.options.queue_capacity);
+        self.runner
+            .consumers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Arc::new(consumer));
+        producer
     }
 }
 
@@ -660,5 +701,124 @@ mod tests {
                 "all losers must report the winning Arc as existing",
             );
         }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn fresh_backend_has_zero_consumers() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            assert_eq!(backend.consumer_count(), 0);
+        });
+    }
+
+    #[test]
+    fn create_producer_returns_handle_and_grows_count_by_one() {
+        shutdown_after(BackendOptions::default(), |backend| {
+            assert_eq!(backend.consumer_count(), 0);
+            let _handle = backend.create_producer();
+            assert_eq!(backend.consumer_count(), 1);
+        });
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn create_producer_from_n_threads_produces_n_contexts() {
+        const N: usize = 8;
+
+        let backend = Arc::new(Backend::start(BackendOptions::default()));
+
+        // N+1-party barrier used in two rounds:
+        //   round 1 — all N threads have registered; main can read context_count().
+        //   round 2 — main has finished reading; threads may exit (drop handles).
+        // `Barrier` is reusable across generations, so a single instance suffices.
+        let barrier = Arc::new(Barrier::new(N + 1));
+
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                let backend = Arc::clone(&backend);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let _handle = backend.create_producer();
+                    barrier.wait(); // round 1: handle alive, ready for count check
+                    barrier.wait(); // round 2: wait for main to finish, then exit
+                    // `_handle` dropped here → alive flips to false
+                })
+            })
+            .collect();
+
+        barrier.wait(); // round 1: all N handles are live
+        assert_eq!(backend.consumer_count(), N);
+        barrier.wait(); // round 2: release threads to exit
+
+        for h in handles {
+            h.join().expect("worker thread must not panic");
+        }
+        backend.shutdown();
+    }
+
+    /// Verify that calling `create_producer` from the backend worker thread
+    /// panics with the documented re-entrancy message.
+    #[cfg(not(miri))]
+    #[test]
+    fn create_producer_from_worker_thread_panics() {
+        // Build a Backend that thinks the current test thread is the worker.
+        let my_id = thread::current().id();
+        let mut backend = Backend::start(BackendOptions::default());
+        backend.worker_thread_id = my_id; //monkeypatch the id of the thread in use by the backend.
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            backend.create_producer();
+        }));
+
+        backend.shutdown();
+
+        let err =
+            result.expect_err("register_producer must panic when called from the worker thread");
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| err.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            msg.contains("insomnilog: cannot register the backend thread as a producer"),
+            "panic message must contain the documented re-entrancy text, got: {msg:?}",
+        );
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn registered_consumer_shares_arc_with_returned_handle() {
+        use std::sync::atomic::Ordering;
+
+        shutdown_after(BackendOptions::default(), |backend| {
+            let handle = backend.create_producer();
+
+            // Retrieve the Arc from the stored context (index 0).
+            let consumer_alive = {
+                let contexts = backend
+                    .runner
+                    .consumers
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                Arc::clone(&contexts[0].alive)
+            };
+
+            // The handle and context must share the same Arc allocation.
+            assert!(
+                Arc::ptr_eq(&handle.alive, &consumer_alive),
+                "handle and consumer must share the same Arc<AtomicBool>",
+            );
+
+            // Writing via the handle must be observable through the context's Arc.
+            assert!(
+                consumer_alive.load(Ordering::Acquire),
+                "alive must be true before dropping the handle",
+            );
+            drop(handle);
+            assert!(
+                !consumer_alive.load(Ordering::Acquire),
+                "alive must be false after dropping the handle",
+            );
+        });
     }
 }
