@@ -172,6 +172,17 @@ impl<F: Formatter, W: Write> ConsoleSink<F, W> {
     }
 }
 
+impl<F: Formatter> ConsoleSink<F, Vec<u8>> {
+    /// Returns a copy of the bytes written to the sink so far.
+    pub fn captured_output(&self) -> Vec<u8> {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .writer
+            .clone()
+    }
+}
+
 impl<F: Formatter, W: Write + Send> Sink for ConsoleSink<F, W> {
     #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     #[expect(
