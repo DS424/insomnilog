@@ -6,6 +6,7 @@ mod backend_runner;
 mod decode;
 mod encode;
 mod formatter;
+mod frontend;
 pub mod legacy;
 mod level;
 mod lifecycle;
