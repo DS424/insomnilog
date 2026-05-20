@@ -1,8 +1,5 @@
 //! Binary record header shared between the write path (macros) and the read path (decode).
 
-// Not yet used by macros or backend — removed once those modules are wired up.
-#![allow(dead_code)]
-
 use core::ptr;
 
 /// The binary record header written at the start of each log entry in the queue.
@@ -30,6 +27,7 @@ impl RecordHeader {
     pub const SIZE: usize = size_of::<Self>();
 
     /// Constructs a new [`RecordHeader`], always zeroing the padding field.
+    #[must_use]
     pub const fn new(
         timestamp_ns: u64,
         metadata_ptr: usize,
