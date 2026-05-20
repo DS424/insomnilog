@@ -24,8 +24,8 @@ pub use backend::{BackendOptions, LoggerAlreadyRegistered, SinkAlreadyRegistered
 pub use formatter::{Formatter, InvalidPatternError, PatternFormatter};
 pub use level::LogLevel;
 pub use lifecycle::{
-    AlreadyStarted, ShutdownGuard, create_logger, get_logger, get_sink, register_sink, shutdown,
-    start,
+    AlreadyStarted, ShutdownGuard, create_logger, get_logger, get_sink, preallocate_thread,
+    register_sink, shutdown, start,
 };
 pub use logger::Logger;
 pub use sink::{ConsoleSink, NullSink, Sink};
