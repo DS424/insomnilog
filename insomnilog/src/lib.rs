@@ -22,6 +22,7 @@ mod sink;
 pub(crate) mod testutil;
 
 pub use backend::{BackendOptions, LoggerAlreadyRegistered, SinkAlreadyRegistered};
+pub use encode::{CustomEncode, Decoder};
 pub use formatter::{Formatter, InvalidPatternError, PatternFormatter};
 pub use level::LogLevel;
 pub use lifecycle::{
