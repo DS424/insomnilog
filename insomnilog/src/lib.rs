@@ -10,6 +10,7 @@ mod level;
 mod lifecycle;
 mod logger;
 mod metadata;
+mod per_thread_queue;
 mod queue;
 mod record;
 mod sink;
