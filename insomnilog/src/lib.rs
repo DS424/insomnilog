@@ -2,6 +2,7 @@
 #![doc = include_str!("../CHANGELOG.md")]
 
 mod backend;
+mod backend_runner;
 mod decode;
 mod encode;
 mod formatter;
