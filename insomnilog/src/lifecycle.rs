@@ -90,6 +90,15 @@ pub fn start(options: backend::BackendOptions) -> Result<ShutdownGuard, AlreadyS
     Ok(ShutdownGuard { _private: () })
 }
 
+/// Returns the process-wide backend.
+///
+/// # Panics
+///
+/// Panics if [`start`] has not been called in this process.
+pub fn get_backend() -> &'static backend::Backend {
+    BACKEND.get().expect(NOT_STARTED_PANIC)
+}
+
 /// Drains and tears the backend down.
 ///
 /// Idempotent: safe to call multiple times, before or after a
