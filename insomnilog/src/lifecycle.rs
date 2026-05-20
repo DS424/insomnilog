@@ -180,3 +180,20 @@ pub fn create_logger(
         .expect(NOT_STARTED_PANIC)
         .create_logger(name, sinks, level)
 }
+
+/// Eagerly registers the calling thread with the backend, paying the queue
+/// allocation and context push upfront rather than on the first log call.
+///
+/// Idempotent: a second call from the same thread is a no-op because the
+/// thread-local producer slot is already populated. A subsequent log macro call
+/// on the same thread also reuses the slot and does not register a second context.
+///
+/// # Panics
+///
+/// - Panics if [`start`] has not been called.
+/// - Panics if called from the backend worker thread (would create infinite
+///   dispatch loop).
+#[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
+pub fn preallocate_thread() {
+    crate::frontend::ensure_producer_registered();
+}
