@@ -265,6 +265,21 @@ impl Backend {
                 "insomnilog: sink errors at shutdown — write_record: {write_errors}, flush: {flush_errors}, panics: {panic_count}"
             );
         }
+        let dropped_records = self.runner.dropped_records.load(Ordering::Relaxed);
+        if dropped_records > 0 {
+            eprintln!(
+                "insomnilog: {dropped_records} log record(s) dropped at shutdown (queue full or oversized)"
+            );
+        }
+    }
+
+    /// Increments the dropped-records counter by one.
+    ///
+    /// Called from the hot path (macro expansion) when `Producer::write`
+    /// returns an error, so it uses a `Relaxed` store — ordering relative to
+    /// other counters is not required.
+    pub(crate) fn increment_dropped_records(&self) {
+        self.runner.dropped_records.fetch_add(1, Ordering::Relaxed);
     }
 }
 
