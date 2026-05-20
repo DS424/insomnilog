@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::PoisonError;
 use std::sync::RwLock;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{self, JoinHandle};
+use std::sync::atomic::Ordering;
+use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
+use crate::backend_runner::BackendRunner;
 use crate::level::LogLevel;
 use crate::logger::Logger;
 use crate::sink::Sink;
@@ -97,10 +97,6 @@ impl Default for BackendOptions {
 /// crate-level `OnceLock`.
 pub struct Backend {
     /// Configuration this backend was started with.
-    #[expect(
-        dead_code,
-        reason = "fields read by the worker loop once it is wired up"
-    )]
     options: BackendOptions,
     /// Named registry of sinks. Holds strong `Arc<dyn Sink>` for the process
     /// lifetime. Lookups go through `RwLock::read`; insertions go through
@@ -114,20 +110,19 @@ pub struct Backend {
     /// record header — that lifetime guarantee is what makes the
     /// raw-pointer dispatch model safe.
     loggers: RwLock<HashMap<String, Arc<Logger>>>,
-    /// Set to `true` by [`Self::shutdown`]. The worker thread observes this
-    /// with `Acquire` and exits when it transitions to `true`.
-    shutdown_flag: Arc<AtomicBool>,
+    /// Shared worker state. `Backend` holds one `Arc` clone; the worker
+    /// thread holds another. All cross-thread state (counters, consumers,
+    /// shutdown flag) lives here so each piece of data exists in exactly one
+    /// place.
+    runner: Arc<BackendRunner>,
     /// Worker thread join handle. `take`n by [`Self::shutdown`] so a second
     /// call is a no-op.
     worker: Mutex<Option<JoinHandle<()>>>,
-    /// Total number of [`Sink::write_record`] calls that returned `Err` across
-    /// all sinks. Incremented by the worker loop; read at shutdown for the
-    /// error summary.
-    write_errors: AtomicU64,
-    /// Total number of [`Sink::flush`] calls that returned `Err` across all
-    /// sinks. Incremented by the worker loop; read at shutdown for the error
-    /// summary.
-    flush_errors: AtomicU64,
+    /// `ThreadId` of the spawned worker thread. Captured inside the worker
+    /// closure and shipped back through a one-shot channel so
+    /// `create_producer` can detect re-entrant registration from the worker
+    /// itself.
+    worker_thread_id: ThreadId,
 }
 
 impl Backend {
@@ -139,21 +134,36 @@ impl Backend {
     /// create a new thread). The backend is unusable without its worker, so
     /// failing fast is the only sensible response.
     pub fn start(options: BackendOptions) -> Self {
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let worker_flag = Arc::clone(&shutdown_flag);
-        let idle_sleep = options.idle_sleep;
+        let runner = Arc::new(BackendRunner::new(
+            options.idle_yield_rounds,
+            options.idle_sleep,
+            options.wait_for_queues_to_empty_before_exit,
+        ));
+        let worker_runner = Arc::clone(&runner);
+        // One-shot handshake: the worker reports its `ThreadId` to
+        // `start` before entering the dispatch loop. `sync_channel(1)`
+        // gives us the cheapest fixed-capacity mpsc available in std.
+        let (tid_tx, tid_rx) = std::sync::mpsc::sync_channel::<ThreadId>(1);
         let handle = thread::Builder::new()
             .name(options.thread_name.clone())
-            .spawn(move || worker_loop(&worker_flag, idle_sleep))
+            .spawn(move || {
+                tid_tx
+                    .send(thread::current().id())
+                    .expect("Backend::start must still be holding the receiver");
+                drop(tid_tx);
+                worker_runner.run();
+            })
             .expect("OS should be able to spawn a thread");
+        let worker_thread_id = tid_rx
+            .recv()
+            .expect("worker must report its ThreadId before running");
         Self {
             options,
             sinks: RwLock::new(HashMap::new()),
             loggers: RwLock::new(HashMap::new()),
-            shutdown_flag,
+            runner,
             worker: Mutex::new(Some(handle)),
-            write_errors: AtomicU64::new(0),
-            flush_errors: AtomicU64::new(0),
+            worker_thread_id,
         }
     }
 
@@ -236,7 +246,7 @@ impl Backend {
     /// Prints a summary to stderr if any sink errors were recorded during
     /// this session.
     pub fn shutdown(&self) {
-        self.shutdown_flag.store(true, Ordering::Release);
+        self.runner.shutdown_flag.store(true, Ordering::Release);
         let handle = self
             .worker
             .lock()
@@ -247,40 +257,14 @@ impl Backend {
             // shutdown path itself stays panic-free.
             let _ = handle.join();
         }
-        let write_errors = self.write_errors.load(Ordering::Relaxed);
-        let flush_errors = self.flush_errors.load(Ordering::Relaxed);
-        if write_errors > 0 || flush_errors > 0 {
+        let write_errors = self.runner.write_errors.load(Ordering::Relaxed);
+        let flush_errors = self.runner.flush_errors.load(Ordering::Relaxed);
+        let panic_count = self.runner.panic_count.load(Ordering::Relaxed);
+        if write_errors > 0 || flush_errors > 0 || panic_count > 0 {
             eprintln!(
-                "insomnilog: sink errors at shutdown — write_record: {write_errors}, flush: {flush_errors}"
+                "insomnilog: sink errors at shutdown — write_record: {write_errors}, flush: {flush_errors}, panics: {panic_count}"
             );
         }
-    }
-
-    /// Increments the write-error counter. Called by the worker loop when a
-    /// sink's [`crate::sink::Sink::write_record`] returns `Err`.
-    #[expect(
-        dead_code,
-        reason = "called by the worker loop once sink dispatch is wired"
-    )]
-    pub(crate) fn record_write_error(&self) {
-        self.write_errors.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Increments the flush-error counter. Called by the worker loop when a
-    /// sink's [`crate::sink::Sink::flush`] returns `Err`.
-    #[expect(
-        dead_code,
-        reason = "called by the worker loop once sink dispatch is wired"
-    )]
-    pub(crate) fn record_flush_error(&self) {
-        self.flush_errors.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-/// Worker thread body. Sleeps in a loop until `shutdown` is set.
-fn worker_loop(shutdown: &AtomicBool, idle_sleep: Duration) {
-    while !shutdown.load(Ordering::Acquire) {
-        thread::sleep(idle_sleep);
     }
 }
 
@@ -596,6 +580,28 @@ mod tests {
                 .expect("registry must still hold the logger");
             assert_eq!(after_drop.level(), LogLevel::Debug);
         });
+    }
+
+    #[test]
+    fn worker_thread_id_matches_spawned_worker_handle() {
+        let backend = Backend::start(BackendOptions::default());
+        let test_thread_id = thread::current().id();
+        let handle_thread_id = backend
+            .worker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|h| h.thread().id())
+            .expect("worker handle is present before shutdown");
+        assert_ne!(
+            backend.worker_thread_id, test_thread_id,
+            "worker must be a different thread than the test",
+        );
+        assert_eq!(
+            backend.worker_thread_id, handle_thread_id,
+            "stored ThreadId must match the JoinHandle's thread",
+        );
+        backend.shutdown();
     }
 
     #[test]
