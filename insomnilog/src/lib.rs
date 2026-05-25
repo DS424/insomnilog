@@ -1,5 +1,10 @@
-#![doc = include_str!("../README.md")]
+#![doc = include_str!(concat!(env!("OUT_DIR"), "/generated_docs.md"))]
 #![doc = include_str!("../CHANGELOG.md")]
+// Minified mermaid.tiny.js in generated_docs.md triggers false-positive tag warnings.
+#![expect(
+    rustdoc::invalid_html_tags,
+    reason = "mermaid.tiny.js inline script contains JS that rustdoc misreads as HTML"
+)]
 
 mod backend;
 mod backend_runner;
