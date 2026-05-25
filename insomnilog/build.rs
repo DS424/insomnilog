@@ -10,6 +10,7 @@ fn main() {
     out.push_str(&resolve_includes("docs/core_concepts.md"));
     out.push_str(&resolve_includes("docs/architecture.md"));
     out.push_str(&resolve_includes("docs/preallocating.md"));
+    out.push_str(&resolve_includes("docs/formatter.md"));
     out.push_str(&mermaid_script());
     std::fs::write(dest, out).unwrap();
 
