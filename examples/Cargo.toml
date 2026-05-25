@@ -27,3 +27,6 @@ name = "core_concepts"
 [[example]]
 name = "preallocating"
 
+[[example]]
+name = "formatter"
+
