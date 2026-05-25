@@ -107,6 +107,8 @@ impl core::fmt::Display for InvalidPatternError {
     }
 }
 
+impl std::error::Error for InvalidPatternError {}
+
 /// Text alignment direction used when padding a field value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Align {
