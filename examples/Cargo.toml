@@ -17,3 +17,9 @@ insomnilog = { path = "../insomnilog" }
 
 [[example]]
 name = "basic_usage"
+
+[[example]]
+name = "quick_start"
+
+[[example]]
+name = "core_concepts"
