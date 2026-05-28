@@ -10,7 +10,7 @@ latency-sensitive hot path.
 begins:
 
 ```rust
-{{#include ../../examples/examples/preallocating.rs:main_thread}}
+{{#include ../examples/preallocating.rs:main_thread}}
 ```
 
 After this call every subsequent log macro call on the same thread is
@@ -21,7 +21,7 @@ The same applies to any thread that will log. For spawned threads, call
 `preallocate_thread` at the start of the thread body before doing any work:
 
 ```rust
-{{#include ../../examples/examples/preallocating.rs:worker_thread}}
+{{#include ../examples/preallocating.rs:worker_thread}}
 ```
 
 For thread pools, the right place is the pool's thread-start hook (sometimes
@@ -32,7 +32,7 @@ startup rather than on the first log call during a request.
 <summary>Full example</summary>
 
 ```rust
-{{#include ../../examples/examples/preallocating.rs}}
+{{#include ../examples/preallocating.rs}}
 ```
 
 </details>

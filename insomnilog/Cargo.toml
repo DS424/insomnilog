@@ -10,7 +10,19 @@ license.workspace = true
 repository.workspace = true
 keywords = ["logging", "log", "non-blocking", "real-time"]
 categories = ["development-tools::debugging"]
-include = ["src/**/*", "tests/**/*", "docs/**/*", "build.rs", "README.md", "CHANGELOG.md", "LICENSE", "NOTICES"]
+include = ["src/**/*", "tests/**/*", "docs/**/*", "examples/**/*", "build.rs", "README.md", "CHANGELOG.md", "LICENSE", "NOTICES"]
+
+[[example]]
+name = "quick_start"
+
+[[example]]
+name = "core_concepts"
+
+[[example]]
+name = "preallocating"
+
+[[example]]
+name = "formatter"
 
 [dependencies]
 rtsan-standalone = { version = "0.3.0", optional = true }

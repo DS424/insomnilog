@@ -11,7 +11,7 @@ the per-thread queues, and the registries that keep loggers and sinks alive. You
 start it once at the beginning of your program and shut it down at the end:
 
 ```rust
-{{#include ../../examples/examples/core_concepts.rs:backend}}
+{{#include ../examples/core_concepts.rs:backend}}
 ```
 
 The returned `ShutdownGuard` keeps the backend alive. When it drops — at the
@@ -40,7 +40,7 @@ Sinks are heap-allocated and reference-counted. You wrap one in an `Arc` and
 register it with a name before attaching it to any logger:
 
 ```rust
-{{#include ../../examples/examples/core_concepts.rs:sink}}
+{{#include ../examples/core_concepts.rs:sink}}
 ```
 
 Registration is optional if you only use the sink with a single logger — you
@@ -63,7 +63,7 @@ You create a logger once, typically during application startup, and store the
 `Arc<Logger>` wherever your code needs it:
 
 ```rust
-{{#include ../../examples/examples/core_concepts.rs:logger}}
+{{#include ../examples/core_concepts.rs:logger}}
 ```
 
 The logger's level and the sink's level work **in series**: the logger's level

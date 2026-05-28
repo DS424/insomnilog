@@ -33,7 +33,7 @@ ring buffer and decoded by a background worker thread.
 
 - **[User guide](insomnilog/docs/)** — Quick start, core concepts, formatters,
   sinks, preallocating thread queues, and more.
-- **[Examples](examples/)** — Runnable examples covering common use cases.
+- **[Examples](insomnilog/examples/)** — Runnable examples covering common use cases.
 - **[Contributing](CONTRIBUTING.md)** — Development tooling, CI pipeline, and
   how to extend the project.
 - **[Architecture Decision Records](adr/)** — The reasoning behind the key
