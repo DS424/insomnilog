@@ -114,13 +114,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "insomnilog-examples"
-version = "0.1.0"
-dependencies = [
- "insomnilog",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -5,5 +5,5 @@ to the console. For a deeper explanation of what each piece does, see
 [Core concepts](core_concepts.md).
 
 ```rust
-{{#include ../../examples/examples/quick_start.rs}}
+{{#include ../examples/quick_start.rs}}
 ```

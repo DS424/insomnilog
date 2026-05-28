@@ -5,7 +5,7 @@ configurable pattern string. A pattern is a mix of literal text and
 `{field}` or `{field:spec}` placeholders that are substituted at format time.
 
 ```rust
-{{#include ../../examples/examples/formatter.rs:definition}}
+{{#include ../examples/formatter.rs:definition}}
 ```
 
 ## Available Fields
@@ -45,38 +45,38 @@ The following configurations showcase the output for different formatter configu
 of the following log messages: 
 
 ```rust
-{{#include ../../examples/examples/formatter.rs:message}}
+{{#include ../examples/formatter.rs:message}}
 ```
 
 ### Minimal — level and message only
 
 ```rust
-{{#include ../../examples/examples/formatter.rs:minimal}}
+{{#include ../examples/formatter.rs:minimal}}
 ```
 
 ### Structured — timestamp, aligned level, logger name
 
 ```rust
-{{#include ../../examples/examples/formatter.rs:structured}}
+{{#include ../examples/formatter.rs:structured}}
 ```
 
 ### Module-style — level, module path, source location
 
 ```rust
-{{#include ../../examples/examples/formatter.rs:module}}
+{{#include ../examples/formatter.rs:module}}
 ```
 
 ### Center-aligned with fill — message only
 
 ```rust
-{{#include ../../examples/examples/formatter.rs:centered}}
+{{#include ../examples/formatter.rs:centered}}
 ```
 
 <details>
 <summary>Full example</summary>
 
 ```rust
-{{#include ../../examples/examples/formatter.rs}}
+{{#include ../examples/formatter.rs}}
 ```
 
 </details>

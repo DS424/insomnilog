@@ -15,7 +15,7 @@ fn main() {
     std::fs::write(dest, out).unwrap();
 
     println!("cargo:rerun-if-changed=docs/");
-    println!("cargo:rerun-if-changed=../examples/");
+    println!("cargo:rerun-if-changed=examples/");
 }
 
 fn mermaid_script() -> String {
