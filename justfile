@@ -32,7 +32,10 @@ address-sanitize:
     RUSTFLAGS="-Z sanitizer=address" cargo +nightly nextest run -Z build-std --target x86_64-unknown-linux-gnu
 
 miri:
-    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri nextest run -p insomnilog
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri nextest run -p insomnilog -E 'not test(/_miri_slow$/)'
+
+miri-slow:
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri nextest run -p insomnilog -E 'test(/_miri_slow$/)'
 
 generate-changelog:
     #!/usr/bin/env bash

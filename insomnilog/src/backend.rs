@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn create_producer_returns_handle_and_grows_count_by_one() {
+    fn create_producer_returns_handle_and_grows_count_by_one_miri_slow() {
         shutdown_after(BackendOptions::default(), |backend| {
             assert_eq!(backend.consumer_count(), 0);
             let _handle = backend.create_producer();
