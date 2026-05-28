@@ -73,7 +73,20 @@ fn process_include(inner: &str, base: &Path) -> String {
         .unwrap_or_else(|e| panic!("could not include {}: {e}", path.display()));
 
     match spec {
-        None => content,
+        None => {
+            // pulldown-cmark ends an HTML block at the first blank line, so blank lines
+            // inside an inlined SVG would break out of any wrapping <div> block and cause
+            // the SVG <text> nodes to render as unstyled inline HTML text instead of SVG.
+            if path.extension().is_some_and(|e| e == "svg") {
+                return content
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n";
+            }
+            content
+        }
         Some(s) => apply_spec(&content, s, &path),
     }
 }
