@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn first_with_producer_registers_one_context_second_reuses() {
+    fn first_with_producer_registers_one_context_second_reuses_miri_slow() {
         let _guard = lifecycle::start(fast_options()).expect("start must succeed");
         let backend = lifecycle::get_backend();
 

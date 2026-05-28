@@ -544,7 +544,7 @@ fn two_loggers_fan_records_to_respective_sinks_only() {
 /// All other integration tests are ignored under Miri — they duplicate this
 /// coverage at much higher cost.
 #[test]
-fn miri_e2e_metadata_pointer_roundtrip() {
+fn miri_e2e_metadata_pointer_roundtrip_miri_slow() {
     let sink = Arc::new(ConsoleSink::with_writer(
         PatternFormatter::default(),
         LogLevel::Trace,
