@@ -1,4 +1,9 @@
 # About insomnilog
+
+<div style="text-align:center">
+{{#include insomnilog_logo.svg}}
+</div>
+
 `insomnilog` is an asynchronous Rust logging library designed for real-time and
 latency-sensitive applications. All logging on the hot path is **zero-allocation**
 and **lock-free** — log records are serialised as raw bytes into a per-thread
