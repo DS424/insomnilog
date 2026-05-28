@@ -1,54 +1,72 @@
 # insomnilog — Claude Project Instructions
 
-## Dev Commands
+## Dev commands
+
+`just` is the command runner. Run it without arguments as the default pre-edit
+check; it lints, tests, and verifies docs.
 
 ```sh
-just          # lint (fmt check + clippy) + test
+just          # lint + test + doc-check (default)
 just fmt      # auto-format (run if fmt check fails)
-cargo run -p insomnilog-examples   # run the example binary
+just test     # run tests only
+just doc      # build and open API docs
 ```
 
-Toolchain: Rust **1.93** (pinned in `rust-toolchain.toml`).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full command reference, CI
+pipeline details, and Miri test conventions.
 
 ## Architecture
 
-```
+The
+[ADRs](adr/) record the reasoning behind the key decisions.
+
+High-level flow:
+
+```text
 log_info!(logger, "…", args)
   │
   ├─ level check (atomic load, relaxed)
-  ├─ encode args → ptr::copy_nonoverlapping into ring buffer (no alloc)
-  └─ commit (Release store on write_pos)
+  └─ Producer::write(total_len, |buf| {
+       encode args → ptr::copy_nonoverlapping into buf (no alloc)
+     })   // commits (Release store on write_pos) on success
           ↓ SPSC queue (one per thread, lazily created)
   BackendWorker (dedicated thread)
-  ├─ poll all Consumer queues round-robin
+  ├─ poll all Consumer queues (round-robin, bounded per-consumer batch)
   ├─ decode_record() → DecodedRecord
-  ├─ PatternFormatter::format() → &str
-  └─ ConsoleSink::write_line() → BufWriter<Stdout>
+  ├─ dispatch to logger.sinks (raw *const Logger in record header)
+  └─ each Sink::write_record() → formats and writes output
 ```
 
-## Module Dependency Order
+## Module dependency order
 
-`level` → `metadata` → `encode` → `decode` → `queue` → `sink` → `formatter`
+`level` → `metadata` → `encode` → `record` → `decode` → `queue` → `formatter` → `sink`
 → `backend` → `frontend` → `macros` → `lib`
 
 Each module only imports from modules earlier in this chain (plus `std`).
 `lib.rs` is the only place that ties them together.
 
-## Key Invariants — Do Not Break
+## Key invariants — do not break
 
 - **Hot path: zero allocations, zero locks.** The macro only calls
-  `try_reserve` + `ptr::copy_nonoverlapping` + `commit`. No `format!`,
-  no `Mutex`, no `Arc` clone on the hot path.
-- **Silent drop on full queue.** `try_reserve` returning `None` discards the
-  record. Never block or propagate an error to the caller.
+  `Producer::write` with a closure that does `ptr::copy_nonoverlapping`
+  into the reserved buffer. No `format!`, no `Mutex`, no `Arc` clone on
+  the hot path.
+- **Silent drop on full queue.** `Producer::write` returning
+  `Err(QueueFull)` discards the record. Never block or propagate an
+  error to the caller.
 - **`metadata_ptr` is a valid `&'static LogMetadata` pointer.** The macro
   stores `&METADATA as *const _ as usize`; `decode_record` casts it back.
   The static lifetime is guaranteed by the macro `static METADATA` expansion.
-- **All records are contiguous in the ring buffer.** The producer skips to
-  offset 0 when a write would straddle the boundary; the consumer advances
-  over the wasted bytes. Do not change this without updating both sides.
+- **`logger_ptr` is a valid `*const Logger` for the process lifetime.** The
+  `LoggerRegistry` holds a strong `Arc<Logger>`; the backend dereferences the
+  raw pointer without a lookup. Do not remove a logger from the registry.
+- **All records are contiguous in the ring buffer.** The queue is backed
+  by a 2× capacity allocation, so any reservation of size `n ≤ capacity`
+  is physically contiguous regardless of where it lands in the ring.
+  Each `Consumer::read` must request exactly the bytes the matching
+  `Producer::write` wrote — see `queue.rs` for the full invariant.
 
-## Lint Conventions
+## Lint conventions
 
 Lints are strict: `pedantic`, `nursery`, `cargo`, `missing_docs`,
 `missing_docs_in_private_items`.
@@ -58,7 +76,7 @@ Lints are strict: `pedantic`, `nursery`, `cargo`, `missing_docs`,
 - The `_`-prefixed items in `lib.rs` (`_RecordHeader`, `_Producer`, etc.) are
   macro helpers; they are `#[doc(hidden)]` intentionally.
 
-## Adding a New Loggable Type
+## Adding a new loggable type
 
 1. Add a variant to `TypeTag` in `encode.rs` (next free integer).
 2. Implement `Encode` for the type in `encode.rs`.
