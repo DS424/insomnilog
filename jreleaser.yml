@@ -1,6 +1,7 @@
 release:
   generic:
     owner: DS424
+    tagName: "{{projectVersion}}"
     changelog:
       sort: ASC
       formatted: ALWAYS
