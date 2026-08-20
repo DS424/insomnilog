@@ -68,8 +68,13 @@ fn log_example(
     // ANCHOR_END: message
 
     if !expected.is_empty() {
+        let normalized_expected = normalize(expected);
         let ready = spin_until(
-            || capture.captured_output().len() >= expected.len(),
+            || {
+                let bytes = capture.captured_output();
+                let text = String::from_utf8(bytes).expect("sink output is valid UTF-8");
+                normalize(&text).len() >= normalized_expected.len()
+            },
             Duration::from_millis(100),
         );
         assert!(
@@ -78,7 +83,7 @@ fn log_example(
         );
         let actual =
             String::from_utf8(capture.captured_output()).expect("sink output is valid UTF-8");
-        assert_eq!(normalize(&actual), normalize(expected));
+        assert_eq!(normalize(&actual), normalized_expected);
     }
     Ok(())
 }
