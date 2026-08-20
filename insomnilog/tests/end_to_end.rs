@@ -337,7 +337,7 @@ fn sequential_logging() {
         expected.len(),
     );
     for (idx, (actual, exp)) in lines.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(*actual, exp, "record {idx} must match exactly",);
+        assert_eq!(*actual, exp, "record {idx} must match exactly");
     }
 }
 
