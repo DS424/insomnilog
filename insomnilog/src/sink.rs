@@ -11,7 +11,9 @@
 
 use std::error::Error;
 use std::fmt;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Stdout, Write};
+use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 use crate::decode::LogRecord;
@@ -266,6 +268,61 @@ impl<F: Formatter> ConsoleSink<F> {
 
 delegate_sink_to_engine!(ConsoleSink);
 
+/// Streams formatted records to one file, indefinitely.
+///
+/// The file is opened once at construction, in append mode, and never
+/// rotated.
+///
+/// The parent directory must already exist — the constructors do not create
+/// it.
+///
+/// The file grows without bounds. There is no size cap and no free-space check.
+pub struct ContinuousFileSink<F: Formatter> {
+    /// Shared write loop over the buffered log file.
+    engine: StreamSink<F, BufWriter<File>>,
+}
+
+impl<F: Formatter> ContinuousFileSink<F> {
+    /// Opens `path` for appending, creating it if needed, and streams
+    /// records to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`io::Error`] if the open fails — including
+    /// when `path`'s parent directory does not exist.
+    pub fn try_new(formatter: F, level: LogLevel, path: impl AsRef<Path>) -> io::Result<Self> {
+        let mut options = OpenOptions::new();
+        options.append(true).create(true);
+        Self::try_from_options(formatter, level, path, options)
+    }
+
+    /// Same as [`Self::try_new`], but the caller supplies the
+    /// [`OpenOptions`] directly — permission bits, `O_EXCL`, truncation —
+    /// instead of the default append-mode open.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`io::Error`] if the open fails.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "an owned OpenOptions matches how callers build one, and \
+                  keeps room for a rotating sink to store and re-apply it"
+    )]
+    pub fn try_from_options(
+        formatter: F,
+        level: LogLevel,
+        path: impl AsRef<Path>,
+        options: OpenOptions,
+    ) -> io::Result<Self> {
+        let file = options.open(path)?;
+        Ok(Self {
+            engine: StreamSink::new(formatter, level, BufWriter::new(file)),
+        })
+    }
+}
+
+delegate_sink_to_engine!(ContinuousFileSink);
+
 /// A no-op [`Sink`] that silently discards every record.
 ///
 /// Useful in tests and benchmarks where output is not needed, and as a
@@ -299,6 +356,8 @@ impl Sink for NullSink {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -373,6 +432,52 @@ mod tests {
 
     /// The single line the default pattern produces for [`make_record`].
     const LINE: &str = "[INFO 0.000] f.rs:1 x=7\n";
+
+    /// Scratch directory unique to one test, removed on drop.
+    ///
+    /// Avoids a `tempfile` dev-dependency; the crate ships with none.
+    struct TempDir {
+        /// Absolute path of the created directory.
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        /// Creates a fresh directory under the system temp dir.
+        fn new(tag: &str) -> Self {
+            /// Disambiguates directories created within one process.
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "insomnilog-{tag}-{pid}-{seq}",
+                pid = std::process::id()
+            ));
+            // A leftover directory from a crashed run would poison the test.
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("temp dir is creatable");
+            Self { path }
+        }
+
+        /// Returns `name` resolved inside this directory.
+        fn join(&self, name: &str) -> PathBuf {
+            self.path.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// Reads `path` as UTF-8, failing the test if it is missing.
+    fn read(path: &Path) -> String {
+        fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+    }
+
+    /// Writes `contents` to `path`, failing the test on error.
+    fn seed(path: &Path, contents: &str) {
+        fs::write(path, contents).unwrap_or_else(|e| panic!("seeding {}: {e}", path.display()));
+    }
 
     #[test]
     fn sink_trait_is_dyn_compatible() {
@@ -530,6 +635,125 @@ mod tests {
         let sink = ConsoleSink::new(PatternFormatter::default(), LogLevel::Info);
         sink.write_record(&make_record()).unwrap();
         sink.flush().unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_try_new_creates_and_writes_the_file() {
+        let dir = TempDir::new("continuous-create");
+        let path = dir.join("app.log");
+        let sink = ContinuousFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path)
+            .unwrap();
+
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
+
+        assert_eq!(read(&path), LINE);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_try_new_appends_to_existing_content() {
+        let dir = TempDir::new("continuous-append");
+        let path = dir.join("app.log");
+        seed(&path, "pre-existing\n");
+
+        let sink = ContinuousFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path)
+            .unwrap();
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
+
+        assert_eq!(read(&path), format!("pre-existing\n{LINE}"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_reopening_keeps_earlier_records() {
+        let dir = TempDir::new("continuous-reopen");
+        let path = dir.join("app.log");
+
+        for _ in 0..2 {
+            let sink =
+                ContinuousFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path)
+                    .unwrap();
+            sink.write_record(&make_record()).unwrap();
+            sink.flush().unwrap();
+        }
+
+        assert_eq!(read(&path), format!("{LINE}{LINE}"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_try_new_errors_when_parent_dir_is_missing() {
+        let dir = TempDir::new("continuous-no-parent");
+        let path = dir.join("absent").join("app.log");
+
+        let Err(err) =
+            ContinuousFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path)
+        else {
+            panic!("a missing parent directory must not be created");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_try_from_options_honors_caller_options() {
+        let dir = TempDir::new("continuous-options");
+        let path = dir.join("app.log");
+        seed(&path, "stale\n");
+
+        let mut options = OpenOptions::new();
+        options.write(true).truncate(true).create(true);
+        let sink = ContinuousFileSink::try_from_options(
+            PatternFormatter::default(),
+            LogLevel::Info,
+            &path,
+            options,
+        )
+        .unwrap();
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
+
+        assert_eq!(read(&path), LINE);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_level_round_trips_each_variant() {
+        let dir = TempDir::new("continuous-level");
+        for level in [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warning,
+            LogLevel::Error,
+        ] {
+            let path = dir.join("app.log");
+            let sink =
+                ContinuousFileSink::try_new(PatternFormatter::default(), level, &path).unwrap();
+            assert_eq!(sink.level(), level);
+        }
+    }
+
+    #[test]
+    fn continuous_file_sink_is_send_and_sync() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ContinuousFileSink<PatternFormatter>>();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn continuous_file_sink_arc_coerces_to_arc_dyn_sink() {
+        let dir = TempDir::new("continuous-dyn");
+        let path = dir.join("app.log");
+        let concrete: std::sync::Arc<ContinuousFileSink<PatternFormatter>> = std::sync::Arc::new(
+            ContinuousFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path)
+                .unwrap(),
+        );
+        let erased: std::sync::Arc<dyn Sink> = concrete;
+        assert_eq!(erased.level(), LogLevel::Info);
     }
 
     #[test]

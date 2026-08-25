@@ -34,7 +34,7 @@ pub use lifecycle::{
     register_sink, shutdown, start,
 };
 pub use logger::Logger;
-pub use sink::{ConsoleSink, NullSink, Sink, StreamSink};
+pub use sink::{ConsoleSink, ContinuousFileSink, NullSink, Sink, StreamSink};
 
 // `#[macro_export]` macros reference `$crate::macros_internal`; re-export it
 // here so the path resolves at the crate root.
