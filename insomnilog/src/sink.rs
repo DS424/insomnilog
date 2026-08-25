@@ -1,19 +1,17 @@
 //! Output sinks for log records.
 //!
 //! Defines the [`Sink`] trait — the contract a sink uses to receive a
-//! [`LogRecord`] from the backend worker — and provides a default
-//! [`ConsoleSink`] that composes a [`Formatter`] with a buffered stdout
-//! writer.
-
-// Items are unused until later rewrite steps wire them up (see Plan.md).
-// This `allow` is removed once `macros.rs` and the backend module use them.
-#![allow(dead_code)]
+//! [`LogRecord`] from the backend worker — plus the [`StreamSink`] engine
+//! that composes a [`Formatter`] with a [`Write`] destination, and the
+//! ready-made sinks built on it: [`ConsoleSink`], [`ContinuousFileSink`],
+//! and [`SessionFileSink`].
 
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Stdout, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use crate::decode::LogRecord;
@@ -322,6 +320,129 @@ impl<F: Formatter> ContinuousFileSink<F> {
 }
 
 delegate_sink_to_engine!(ContinuousFileSink);
+
+/// Streams formatted records to a fresh file per program run.
+///
+/// Behaves exactly like [`ContinuousFileSink`] once constructed; the
+/// difference is that construction first rotates the previous session's
+/// files out of the way, keeping at most `max_backups` of them. There is no
+/// mid-session trigger — one session, one file.
+///
+/// For `path = app.log` and `max_backups = N ≥ 1`:
+///
+/// ```text
+/// delete  app.log.N                  (drops the oldest)
+/// rename  app.log.{N-1} → app.log.N
+///         …
+/// rename  app.log       → app.log.1
+/// open    app.log                    (fresh, empty — this session)
+/// ```
+///
+/// Every step whose source is missing is skipped rather than failing, so a
+/// fresh deployment or a partially-populated backup set rotates cleanly.
+/// `max_backups = 0` deletes `app.log` and creates it fresh — the live file
+/// is never truncated in place, at any `N`.
+///
+/// Backups above `max_backups` — left over from a run configured with a
+/// larger value — are never touched.
+///
+/// The parent directory must already exist; see [`ContinuousFileSink`].
+pub struct SessionFileSink<F: Formatter> {
+    /// Shared write loop over this session's buffered log file.
+    engine: StreamSink<F, BufWriter<File>>,
+}
+
+#[allow(
+    clippy::missing_docs_in_private_items,
+    reason = "private helpers are self-explanatory"
+)]
+impl<F: Formatter> SessionFileSink<F> {
+    /// Rotates existing logs, keeping at most `max_backups`, then opens a
+    /// fresh session file at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`io::Error`] if a rename or delete in the
+    /// rotation cascade fails, or if the fresh file cannot be opened. A
+    /// failure aborts construction rather than continuing best-effort.
+    pub fn try_new(
+        formatter: F,
+        level: LogLevel,
+        path: impl AsRef<Path>,
+        max_backups: usize,
+    ) -> io::Result<Self> {
+        let mut options = OpenOptions::new();
+        options.append(true).create(true);
+        Self::try_from_options(formatter, level, path, max_backups, options)
+    }
+
+    /// Same as [`Self::try_new`], but the caller supplies the
+    /// [`OpenOptions`] for *this session's* fresh file.
+    ///
+    /// The rotation cascade runs first either way; `options` only replaces
+    /// the default append-mode open. Renamed backups keep the permissions
+    /// they were created with, since `rename` moves a directory entry
+    /// rather than reopening the file.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::try_new`].
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "an owned OpenOptions matches how callers build one, and \
+                  keeps room for a rotating sink to store and re-apply it"
+    )]
+    pub fn try_from_options(
+        formatter: F,
+        level: LogLevel,
+        path: impl AsRef<Path>,
+        max_backups: usize,
+        options: OpenOptions,
+    ) -> io::Result<Self> {
+        let path = path.as_ref();
+        Self::rotate(path, max_backups)?;
+        let file = options.open(path)?;
+        Ok(Self {
+            engine: StreamSink::new(formatter, level, BufWriter::new(file)),
+        })
+    }
+
+    fn get_backup_path_for_index(path: &Path, index: usize) -> PathBuf {
+        if index == 0 {
+            return path.to_path_buf();
+        }
+        let mut name = OsString::from(path.as_os_str());
+        name.push(format!(".{index}"));
+        PathBuf::from(name)
+    }
+
+    fn remove_if_present(path: &Path) -> io::Result<()> {
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+
+    fn rename_if_present(from: &Path, to: &Path) -> io::Result<()> {
+        match std::fs::rename(from, to) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+
+    fn rotate(path: &Path, max_backups: usize) -> io::Result<()> {
+        Self::remove_if_present(&Self::get_backup_path_for_index(path, max_backups))?;
+        for index in (1..=max_backups).rev() {
+            Self::rename_if_present(
+                &Self::get_backup_path_for_index(path, index - 1),
+                &Self::get_backup_path_for_index(path, index),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+delegate_sink_to_engine!(SessionFileSink);
 
 /// A no-op [`Sink`] that silently discards every record.
 ///
@@ -750,6 +871,240 @@ mod tests {
         let path = dir.join("app.log");
         let concrete: std::sync::Arc<ContinuousFileSink<PatternFormatter>> = std::sync::Arc::new(
             ContinuousFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path)
+                .unwrap(),
+        );
+        let erased: std::sync::Arc<dyn Sink> = concrete;
+        assert_eq!(erased.level(), LogLevel::Info);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_try_new_on_fresh_deployment_creates_empty_live_file() {
+        let dir = TempDir::new("session-fresh");
+        let path = dir.join("app.log");
+
+        let sink = SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 3)
+            .unwrap();
+        drop(sink);
+
+        assert_eq!(read(&path), "");
+        assert!(!dir.join("app.log.1").exists(), "no backup to create yet");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_try_new_moves_live_file_to_first_backup() {
+        let dir = TempDir::new("session-first-backup");
+        let path = dir.join("app.log");
+        seed(&path, "previous session\n");
+
+        let sink = SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 2)
+            .unwrap();
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
+
+        assert_eq!(read(&dir.join("app.log.1")), "previous session\n");
+        assert_eq!(read(&path), LINE);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_cascade_shifts_backups_and_drops_the_oldest() {
+        let dir = TempDir::new("session-cascade");
+        let path = dir.join("app.log");
+        seed(&path, "live\n");
+        seed(&dir.join("app.log.1"), "one\n");
+        seed(&dir.join("app.log.2"), "two\n");
+
+        let sink = SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 2)
+            .unwrap();
+        drop(sink);
+
+        assert_eq!(read(&dir.join("app.log.1")), "live\n");
+        assert_eq!(read(&dir.join("app.log.2")), "one\n");
+        assert_eq!(read(&path), "", "the live file starts empty");
+        assert!(
+            !dir.join("app.log.3").exists(),
+            "max_backups = 2 must not create a third slot"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_skips_rename_steps_with_a_missing_source() {
+        let dir = TempDir::new("session-partial");
+        let path = dir.join("app.log");
+        seed(&path, "live\n");
+        // Deliberately no `app.log.1`: the `.1 -> .2` step has nothing to do.
+        seed(&dir.join("app.log.2"), "two\n");
+
+        let sink = SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 3)
+            .unwrap();
+        drop(sink);
+
+        assert_eq!(read(&dir.join("app.log.3")), "two\n");
+        assert!(!dir.join("app.log.2").exists(), "the gap shifts up with it");
+        assert_eq!(read(&dir.join("app.log.1")), "live\n");
+        assert_eq!(read(&path), "");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_max_backups_zero_deletes_without_creating_a_backup() {
+        let dir = TempDir::new("session-zero");
+        let path = dir.join("app.log");
+        seed(&path, "live\n");
+
+        let sink = SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 0)
+            .unwrap();
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
+
+        assert_eq!(read(&path), LINE, "the live file is recreated, not kept");
+        assert!(
+            !dir.join("app.log.1").exists(),
+            "max_backups = 0 keeps no backups"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_leaves_backups_above_max_untouched() {
+        let dir = TempDir::new("session-shrink");
+        let path = dir.join("app.log");
+        seed(&path, "live\n");
+        seed(&dir.join("app.log.1"), "one\n");
+        seed(&dir.join("app.log.2"), "two\n");
+        seed(&dir.join("app.log.3"), "three\n");
+
+        let sink = SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 1)
+            .unwrap();
+        drop(sink);
+
+        assert_eq!(read(&dir.join("app.log.1")), "live\n");
+        assert_eq!(read(&dir.join("app.log.2")), "two\n", "orphan, untouched");
+        assert_eq!(read(&dir.join("app.log.3")), "three\n", "orphan, untouched");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_rotates_once_per_construction() {
+        let dir = TempDir::new("session-per-run");
+        let path = dir.join("app.log");
+
+        for tag in ["first", "second"] {
+            let sink =
+                SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 2)
+                    .unwrap();
+            sink.write_record(&make_record()).unwrap();
+            sink.flush().unwrap();
+            drop(sink);
+            assert_eq!(read(&path), LINE, "{tag} session writes one line");
+        }
+
+        assert_eq!(read(&dir.join("app.log.1")), LINE, "the first session");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_try_from_options_still_rotates() {
+        let dir = TempDir::new("session-options");
+        let path = dir.join("app.log");
+        seed(&path, "live\n");
+
+        let mut options = OpenOptions::new();
+        options.append(true).create(true);
+        let sink = SessionFileSink::try_from_options(
+            PatternFormatter::default(),
+            LogLevel::Info,
+            &path,
+            2,
+            options,
+        )
+        .unwrap();
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
+
+        assert_eq!(
+            read(&dir.join("app.log.1")),
+            "live\n",
+            "the cascade runs before the fresh open, options or not"
+        );
+        assert_eq!(read(&path), LINE);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_try_from_options_applies_permission_bits() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let dir = TempDir::new("session-mode");
+        let path = dir.join("app.log");
+
+        let mut options = OpenOptions::new();
+        options.append(true).create(true).mode(0o400);
+        let sink = SessionFileSink::try_from_options(
+            PatternFormatter::default(),
+            LogLevel::Info,
+            &path,
+            1,
+            options,
+        )
+        .unwrap();
+        drop(sink);
+
+        // the kernel applies `mode & !umask`, and only a pathological
+        // umask carrying 0o400 could yield this from a default open.
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o400, "got {mode:o}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_try_new_errors_when_parent_dir_is_missing() {
+        let dir = TempDir::new("session-no-parent");
+        let path = dir.join("absent").join("app.log");
+
+        let Err(err) =
+            SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 2)
+        else {
+            panic!("a missing parent directory must not be created");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_level_round_trips_each_variant() {
+        let dir = TempDir::new("session-level");
+        for level in [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warning,
+            LogLevel::Error,
+        ] {
+            let path = dir.join("app.log");
+            let sink =
+                SessionFileSink::try_new(PatternFormatter::default(), level, &path, 1).unwrap();
+            assert_eq!(sink.level(), level);
+        }
+    }
+
+    #[test]
+    fn session_file_sink_is_send_and_sync() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SessionFileSink<PatternFormatter>>();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the real filesystem")]
+    fn session_file_sink_arc_coerces_to_arc_dyn_sink() {
+        let dir = TempDir::new("session-dyn");
+        let path = dir.join("app.log");
+        let concrete: std::sync::Arc<SessionFileSink<PatternFormatter>> = std::sync::Arc::new(
+            SessionFileSink::try_new(PatternFormatter::default(), LogLevel::Info, &path, 1)
                 .unwrap(),
         );
         let erased: std::sync::Arc<dyn Sink> = concrete;
