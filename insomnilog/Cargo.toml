@@ -22,6 +22,9 @@ name = "core_concepts"
 name = "preallocating"
 
 [[example]]
+name = "sinks"
+
+[[example]]
 name = "formatter"
 
 [dependencies]

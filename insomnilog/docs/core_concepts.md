@@ -30,11 +30,22 @@ JSON, forward to a metrics system, or anything else.
 Every sink has a **level filter** set at construction time. Records below that
 level are skipped by the backend before `write_record` is ever called.
 
-`insomnilog` ships with two built-in sinks:
+`insomnilog` ships with these built-in sinks:
 
 - **`ConsoleSink`** — formats records using a [`Formatter`] and writes them to
   stdout. The default formatter produces human-readable timestamped lines.
+- **`ContinuousFileSink`** — appends formatted records to one file for as long
+  as the sink lives.
+- **`SessionFileSink`** — the same, but construction first rotates the previous
+  run's file to `app.log.1`, `app.log.2`, … keeping at most `max_backups` of
+  them, so every program run gets a fresh file.
+- **`StreamSink`** — the shared engine behind the three above, generic over any
+  `std::io::Write`. Use it directly for a destination they don't cover, such as
+  an in-memory `Vec<u8>` in tests.
 - **`NullSink`** — silently discards every record. Useful in tests.
+
+[Choosing a sink](#choosing-a-sink) covers what each one is for and how the
+file sinks differ across program restarts.
 
 Sinks are heap-allocated and reference-counted. You wrap one in an `Arc` and
 register it with a name before attaching it to any logger:
