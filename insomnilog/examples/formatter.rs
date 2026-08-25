@@ -3,8 +3,8 @@
 use std::{error::Error, sync::Arc, thread, time::Duration};
 
 use insomnilog::{
-    BackendOptions, ConsoleSink, LogLevel, PatternFormatter, Sink, create_logger, log_info,
-    log_warn, start,
+    BackendOptions, ConsoleSink, LogLevel, PatternFormatter, Sink, StreamSink, create_logger,
+    log_info, log_warn, start,
 };
 
 /// Spins calling `pred` until it returns `true` or `timeout` elapses.
@@ -44,7 +44,7 @@ fn log_example(
         PatternFormatter::new(pattern)?,
         LogLevel::Trace,
     ));
-    let capture = Arc::new(ConsoleSink::with_writer(
+    let capture = Arc::new(StreamSink::new(
         PatternFormatter::new(pattern)?,
         LogLevel::Trace,
         Vec::<u8>::new(),

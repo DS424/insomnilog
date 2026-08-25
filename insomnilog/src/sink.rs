@@ -111,10 +111,31 @@ pub trait Sink: Send + Sync {
     fn level(&self) -> LogLevel;
 }
 
-/// State held under the [`ConsoleSink`] mutex: the writer plus a scratch
+/// Formats `record` into `scratch` and writes it, plus a trailing newline,
+/// to `writer`.
+///
+/// The single place the on-the-wire line shape is decided, so every sink emits
+/// byte-identical output.
+///
+/// # Errors
+///
+/// Forwards the writer's I/O error.
+fn format_line(
+    formatter: &impl Formatter,
+    scratch: &mut String,
+    record: &LogRecord,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    scratch.clear();
+    formatter.format(record, scratch);
+    writer.write_all(scratch.as_bytes())?;
+    writer.write_all(b"\n")
+}
+
+/// State held under the [`StreamSink`] mutex: the writer plus a scratch
 /// `String` reused across `write_record` calls so the sink doesn't
 /// reallocate on every line.
-struct ConsoleState<W: Write> {
+struct StreamState<W: Write> {
     /// Writer receiving formatted records.
     writer: W,
     /// Scratch buffer for the formatted record. Cleared, not freed, between
@@ -122,49 +143,35 @@ struct ConsoleState<W: Write> {
     scratch: String,
 }
 
-/// Writes formatted records to a [`Write`] destination.
+/// Streams formatted records to a [`Write`] destination.
 ///
-/// Composes a [`Formatter`] with a buffered writer. The writer plus a
-/// reusable scratch `String` live behind a [`Mutex`] because
-/// [`Sink::write_record`] takes `&self`; in practice the lock is
-/// uncontended — sinks are usually invoked only from the backend worker
-/// thread.
+/// Composes a [`Formatter`] with a writer. The writer plus a reusable
+/// scratch `String` live behind a [`Mutex`] because [`Sink::write_record`]
+/// takes `&self`; in practice the lock is uncontended — sinks are usually
+/// invoked only from the backend worker thread.
 ///
-/// The writer type `W` defaults to [`BufWriter<Stdout>`], which is what
-/// [`ConsoleSink::new`] produces. Use [`ConsoleSink::with_writer`] to supply
-/// an alternative destination (e.g. a `Vec<u8>` in tests).
-pub struct ConsoleSink<F: Formatter, W: Write = BufWriter<Stdout>> {
+/// This is the shared engine behind more specific sinks types:
+/// each of them holds a `StreamSink` and forwards
+/// the three [`Sink`] methods to it, so there is exactly one write loop.
+/// Use it directly to stream to a destination none of those cover — an
+/// in-memory `Vec<u8>` in tests, a pipe, a socket.
+pub struct StreamSink<F: Formatter, W: Write> {
     /// Renders [`LogRecord`]s into the scratch buffer.
     formatter: F,
     /// Filter level, fixed at construction (no atomic, no `set_level`).
     level: LogLevel,
     /// Writer + scratch buffer behind a single lock so each formatted line
     /// reaches the OS as one atomic `write_all` pair.
-    state: Mutex<ConsoleState<W>>,
+    state: Mutex<StreamState<W>>,
 }
 
-impl<F: Formatter> ConsoleSink<F> {
-    /// Constructs a [`ConsoleSink`] writing to a fresh [`BufWriter<Stdout>`].
-    #[expect(
-        clippy::use_self,
-        reason = "Self here is ConsoleSink<F> but the return type is \
-                  ConsoleSink<F, BufWriter<Stdout>>; they differ in W"
-    )]
-    pub fn new(formatter: F, level: LogLevel) -> ConsoleSink<F, BufWriter<Stdout>> {
-        ConsoleSink::with_writer(formatter, level, BufWriter::new(io::stdout()))
-    }
-}
-
-impl<F: Formatter, W: Write> ConsoleSink<F, W> {
-    /// Constructs a [`ConsoleSink`] writing to the given `writer`.
-    ///
-    /// Prefer [`ConsoleSink::new`] for production use. This constructor
-    /// exists mainly to allow tests to capture output without touching stdout.
-    pub const fn with_writer(formatter: F, level: LogLevel, writer: W) -> Self {
+impl<F: Formatter, W: Write> StreamSink<F, W> {
+    /// Constructs a [`StreamSink`] writing to the given `writer`.
+    pub const fn new(formatter: F, level: LogLevel, writer: W) -> Self {
         Self {
             formatter,
             level,
-            state: Mutex::new(ConsoleState {
+            state: Mutex::new(StreamState {
                 writer,
                 scratch: String::new(),
             }),
@@ -172,7 +179,7 @@ impl<F: Formatter, W: Write> ConsoleSink<F, W> {
     }
 }
 
-impl<F: Formatter> ConsoleSink<F, Vec<u8>> {
+impl<F: Formatter> StreamSink<F, Vec<u8>> {
     /// Returns a copy of the bytes written to the sink so far.
     pub fn captured_output(&self) -> Vec<u8> {
         self.state
@@ -183,22 +190,19 @@ impl<F: Formatter> ConsoleSink<F, Vec<u8>> {
     }
 }
 
-impl<F: Formatter, W: Write + Send> Sink for ConsoleSink<F, W> {
+impl<F: Formatter, W: Write + Send> Sink for StreamSink<F, W> {
     #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
     #[expect(
         clippy::significant_drop_tightening,
         reason = "the lock must cover format + write_all so concurrent \
-                  ConsoleSinks don't interleave bytes mid-line"
+                  StreamSinks don't interleave bytes mid-line"
     )]
     fn write_record(&self, record: &LogRecord) -> Result<(), SinkError> {
         let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         // Destructure so the formatter's `&mut scratch` and the writer's
         // `&mut self` borrows don't collide through MutexGuard's Deref.
-        let ConsoleState { writer, scratch } = &mut *guard;
-        scratch.clear();
-        self.formatter.format(record, scratch);
-        writer.write_all(scratch.as_bytes())?;
-        writer.write_all(b"\n")?;
+        let StreamState { writer, scratch } = &mut *guard;
+        format_line(&self.formatter, scratch, record, writer)?;
         Ok(())
     }
 
@@ -212,6 +216,55 @@ impl<F: Formatter, W: Write + Send> Sink for ConsoleSink<F, W> {
         self.level
     }
 }
+
+/// Implements [`Sink`] for a sink that holds its write loop in an
+/// `engine: StreamSink<F, _>` field and adds no per-record behavior of its
+/// own.
+///
+/// Generating the three forwarders leaves one code path to test rather than
+/// one hand-written impl per sink — see `delegated_sink_*` in the tests,
+/// which drive the same expansion through an observable writer.
+///
+/// A sink that must act *inside* `write_record` — a rotating sink, which
+/// owns its own lock over writer + rotation state — writes its own impl and
+/// calls [`format_line`] directly instead of using this.
+macro_rules! delegate_sink_to_engine {
+    ($sink:ident) => {
+        impl<F: Formatter> Sink for $sink<F> {
+            fn write_record(&self, record: &LogRecord) -> Result<(), SinkError> {
+                self.engine.write_record(record)
+            }
+
+            fn flush(&self) -> Result<(), SinkError> {
+                self.engine.flush()
+            }
+
+            fn level(&self) -> LogLevel {
+                self.engine.level()
+            }
+        }
+    };
+}
+
+/// Writes formatted records to standard output.
+///
+/// Wraps a [`StreamSink`] over a [`BufWriter<Stdout>`]; the backend worker
+/// flushes it after each batch and at shutdown.
+pub struct ConsoleSink<F: Formatter> {
+    /// Shared write loop over buffered stdout.
+    engine: StreamSink<F, BufWriter<Stdout>>,
+}
+
+impl<F: Formatter> ConsoleSink<F> {
+    /// Constructs a [`ConsoleSink`] writing to a fresh [`BufWriter<Stdout>`].
+    pub fn new(formatter: F, level: LogLevel) -> Self {
+        Self {
+            engine: StreamSink::new(formatter, level, BufWriter::new(io::stdout())),
+        }
+    }
+}
+
+delegate_sink_to_engine!(ConsoleSink);
 
 /// A no-op [`Sink`] that silently discards every record.
 ///
@@ -318,6 +371,9 @@ mod tests {
         }
     }
 
+    /// The single line the default pattern produces for [`make_record`].
+    const LINE: &str = "[INFO 0.000] f.rs:1 x=7\n";
+
     #[test]
     fn sink_trait_is_dyn_compatible() {
         let arc: std::sync::Arc<dyn Sink> = std::sync::Arc::new(CountingSink::new(LogLevel::Info));
@@ -329,6 +385,112 @@ mod tests {
     fn sink_trait_bounds_are_send_and_sync() {
         const fn assert_send_sync<T: Send + Sync + ?Sized>() {}
         assert_send_sync::<dyn Sink>();
+    }
+
+    /// Holds the engine over an observable writer and delegates through the
+    /// same macro as the shipping sinks, so the generated forwarders can be
+    /// asserted on.
+    struct DelegatingProbe<F: Formatter> {
+        /// Shared write loop over an in-memory buffer.
+        engine: StreamSink<F, Vec<u8>>,
+    }
+
+    delegate_sink_to_engine!(DelegatingProbe);
+
+    fn make_probe(level: LogLevel) -> DelegatingProbe<PatternFormatter> {
+        DelegatingProbe {
+            engine: StreamSink::new(PatternFormatter::default(), level, Vec::new()),
+        }
+    }
+
+    #[test]
+    fn delegated_sink_write_record_reaches_the_engine_writer() {
+        let sink = make_probe(LogLevel::Info);
+        sink.write_record(&make_record()).unwrap();
+        assert_eq!(
+            String::from_utf8(sink.engine.captured_output()).unwrap(),
+            LINE
+        );
+    }
+
+    #[test]
+    fn delegated_sink_flush_emits_no_output_of_its_own() {
+        let sink = make_probe(LogLevel::Info);
+        sink.flush().unwrap();
+
+        assert!(sink.engine.captured_output().is_empty());
+    }
+
+    #[test]
+    fn delegated_sink_level_reports_the_engine_level() {
+        for level in [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warning,
+            LogLevel::Error,
+        ] {
+            let sink = make_probe(level);
+            assert_eq!(sink.level(), level);
+        }
+    }
+
+    fn make_vec_sink() -> StreamSink<PatternFormatter, Vec<u8>> {
+        StreamSink::new(PatternFormatter::default(), LogLevel::Info, Vec::new())
+    }
+
+    fn captured(sink: StreamSink<PatternFormatter, Vec<u8>>) -> String {
+        let bytes = sink
+            .state
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
+            .writer;
+        String::from_utf8(bytes).expect("sink output is valid UTF-8")
+    }
+
+    #[test]
+    fn stream_sink_write_record_appends_newline() {
+        let sink = make_vec_sink();
+        sink.write_record(&make_record()).unwrap();
+        let out = captured(sink);
+        assert!(
+            out.ends_with('\n'),
+            "expected trailing newline, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn stream_sink_write_record_contains_formatted_arg() {
+        let sink = make_vec_sink();
+        sink.write_record(&make_record()).unwrap();
+        let out = captured(sink);
+        assert!(
+            out.contains("x=7"),
+            "expected 'x=7' in output, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn stream_sink_write_record_accumulates_lines() {
+        let sink = make_vec_sink();
+        sink.write_record(&make_record()).unwrap();
+        sink.write_record(&make_record()).unwrap();
+        let out = captured(sink);
+        // Verbatim: two identical lines from the default pattern
+        // "[{level} {secs}.{millis:03}] {file}:{line} {message}"
+        // with timestamp_ns=0, INFO, file="f.rs", line=1, message="x=7".
+        assert_eq!(
+            out,
+            "[INFO 0.000] f.rs:1 x=7\n\
+             [INFO 0.000] f.rs:1 x=7\n",
+        );
+    }
+
+    #[test]
+    fn stream_sink_flush_succeeds_on_vec_writer() {
+        let sink = make_vec_sink();
+        sink.write_record(&make_record()).unwrap();
+        sink.flush().unwrap();
     }
 
     #[test]
@@ -360,60 +522,12 @@ mod tests {
         assert_eq!(erased.level(), LogLevel::Info);
     }
 
-    fn make_vec_sink() -> ConsoleSink<PatternFormatter, Vec<u8>> {
-        ConsoleSink::with_writer(PatternFormatter::default(), LogLevel::Info, Vec::new())
-    }
-
-    fn captured(sink: ConsoleSink<PatternFormatter, Vec<u8>>) -> String {
-        let bytes = sink
-            .state
-            .into_inner()
-            .unwrap_or_else(PoisonError::into_inner)
-            .writer;
-        String::from_utf8(bytes).expect("sink output is valid UTF-8")
-    }
-
     #[test]
-    fn console_sink_write_record_appends_newline() {
-        let sink = make_vec_sink();
-        sink.write_record(&make_record()).unwrap();
-        let out = captured(sink);
-        assert!(
-            out.ends_with('\n'),
-            "expected trailing newline, got: {out:?}"
-        );
-    }
-
-    #[test]
-    fn console_sink_write_record_contains_formatted_arg() {
-        let sink = make_vec_sink();
-        sink.write_record(&make_record()).unwrap();
-        let out = captured(sink);
-        assert!(
-            out.contains("x=7"),
-            "expected 'x=7' in output, got: {out:?}"
-        );
-    }
-
-    #[test]
-    fn console_sink_write_record_accumulates_lines() {
-        let sink = make_vec_sink();
-        sink.write_record(&make_record()).unwrap();
-        sink.write_record(&make_record()).unwrap();
-        let out = captured(sink);
-        // Verbatim: two identical lines from the default pattern
-        // "[{level} {secs}.{millis:03}] {file}:{line} {message}"
-        // with timestamp_ns=0, INFO, file="f.rs", line=1, message="x=7".
-        assert_eq!(
-            out,
-            "[INFO 0.000] f.rs:1 x=7\n\
-             [INFO 0.000] f.rs:1 x=7\n",
-        );
-    }
-
-    #[test]
-    fn console_sink_flush_succeeds_on_vec_writer() {
-        let sink = make_vec_sink();
+    fn console_sink_new_writes_one_record_without_panicking() {
+        // Smoke test only: the real stdout wiring can't be observed from
+        // in-process, so this just proves `new` builds a usable sink and a
+        // record can be pushed through it.
+        let sink = ConsoleSink::new(PatternFormatter::default(), LogLevel::Info);
         sink.write_record(&make_record()).unwrap();
         sink.flush().unwrap();
     }
