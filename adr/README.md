@@ -20,3 +20,7 @@ Format: [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records).
 | [0010](0010-logger-passed-explicitly-no-name-lookup-macro.md) | Logger passed explicitly at the call site; no name-lookup macro | Accepted |
 | [0011](0011-no-auto-start-panic-when-not-started.md) | No implicit auto-start; using the logger before `start()` panics | Accepted |
 | [0012](0012-shutdown-drain-then-stop-raii-guard.md) | Shutdown drains then stops, driven by an RAII guard | Accepted |
+| [0013](0013-sinks-compose-a-shared-streamsink-engine.md) | Sinks compose a shared `StreamSink` engine and delegate to it | Accepted |
+| [0014](0014-format-line-helper-not-a-hookable-engine.md) | Share a `format_line` helper, not a hookable engine | Accepted |
+| [0015](0015-file-sink-construction-append-only-fallible-try-new.md) | File sinks open append-only via a fallible `try_new` | Accepted |
+| [0016](0016-session-rotation-numbered-backups-at-construction.md) | Session rotation uses numbered backups at construction only | Accepted |
