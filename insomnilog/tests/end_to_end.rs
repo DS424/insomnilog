@@ -11,8 +11,8 @@ use std::time::Duration;
 use std::fmt;
 
 use insomnilog::{
-    BackendOptions, ConsoleSink, CustomEncode, Decoder, LogLevel, Logger, NullSink,
-    PatternFormatter, Sink, create_logger, log_debug, log_error, log_info, log_trace, log_warn,
+    BackendOptions, CustomEncode, Decoder, LogLevel, Logger, NullSink, PatternFormatter, Sink,
+    StreamSink, create_logger, log_debug, log_error, log_info, log_trace, log_warn,
     preallocate_thread, register_sink, start,
 };
 
@@ -27,15 +27,15 @@ fn fast_options() -> BackendOptions {
     }
 }
 
-/// Returns the bytes captured by a `ConsoleSink<_, Vec<u8>>` as a `String`.
-fn sink_output(sink: &ConsoleSink<PatternFormatter, Vec<u8>>) -> String {
+/// Returns the bytes captured by a `StreamSink<_, Vec<u8>>` as a `String`.
+fn sink_output(sink: &StreamSink<PatternFormatter, Vec<u8>>) -> String {
     String::from_utf8(sink.captured_output()).expect("sink output is valid UTF-8")
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "Low Miri ROI")]
 fn log_info_no_args_emits_one_info_record_with_empty_args() {
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::default(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -67,7 +67,7 @@ fn log_info_no_args_emits_one_info_record_with_empty_args() {
 #[test]
 #[cfg_attr(miri, ignore = "Low Miri ROI")]
 fn log_info_with_args_encodes_args_in_order() {
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::default(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -93,7 +93,7 @@ fn log_info_with_args_encodes_args_in_order() {
 #[test]
 #[cfg_attr(miri, ignore = "Low Miri ROI")]
 fn macro_accepts_arc_logger_and_ref_logger() {
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::default(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -151,7 +151,7 @@ fn silent_drop_on_queue_full_causes_no_panic() {
 )]
 fn logger_identity_reaches_sink_as_correct_name() {
     // Use a pattern that includes {logger} so the name is visible in the output.
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::new("{logger} {message}").unwrap(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -178,7 +178,7 @@ fn logger_identity_reaches_sink_as_correct_name() {
 #[test]
 #[cfg_attr(miri, ignore = "Low Miri ROI")]
 fn all_five_level_macros_emit_correct_levels() {
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::default(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -279,7 +279,7 @@ fn log_all_levels(logger: &Logger, iteration: u64) {
     reason = "test values are small enough that f64 cast is exact"
 )]
 fn sequential_logging() {
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::new("{level} {logger} {message}").unwrap(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -357,7 +357,7 @@ fn sequential_logging_full_speed() {
         ..BackendOptions::default()
     };
 
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::new("{level} {logger} {message}").unwrap(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -401,7 +401,7 @@ fn sequential_logging_full_speed() {
 fn two_threads_parallel_logging() {
     const RECORDS_PER_THREAD: u32 = 100;
 
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::new("{logger} {message}").unwrap(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -460,12 +460,12 @@ fn two_threads_parallel_logging() {
 fn two_loggers_fan_records_to_respective_sinks_only() {
     const RECORDS_PER_LOGGER: u32 = 50;
 
-    let sink_a = Arc::new(ConsoleSink::with_writer(
+    let sink_a = Arc::new(StreamSink::new(
         PatternFormatter::new("{logger} {message}").unwrap(),
         LogLevel::Trace,
         Vec::<u8>::new(),
     ));
-    let sink_b = Arc::new(ConsoleSink::with_writer(
+    let sink_b = Arc::new(StreamSink::new(
         PatternFormatter::new("{logger} {message}").unwrap(),
         LogLevel::Trace,
         Vec::<u8>::new(),
@@ -545,7 +545,7 @@ fn two_loggers_fan_records_to_respective_sinks_only() {
 /// coverage at much higher cost.
 #[test]
 fn miri_e2e_metadata_pointer_roundtrip_miri_slow() {
-    let sink = Arc::new(ConsoleSink::with_writer(
+    let sink = Arc::new(StreamSink::new(
         PatternFormatter::default(),
         LogLevel::Trace,
         Vec::<u8>::new(),
