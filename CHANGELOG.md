@@ -4,6 +4,52 @@ The following sections list the changes between each consecutive version of this
 The `Highlights` section is a short summary of the `Details` section.
 
 <!-- JRELEASER_CHANGELOG_APPEND - Do not remove or modify this section -->
+## 0.3.0 (2026-08-28)
+
+### ✨ Highlights
+
+The library now ships with two new built-in file sinks: `ContinuousFileSink` and `SessionFileSink`.
+
+### ⚠️ Known Issues
+
+The following things have not been tested or validated:
+
+- Running long-term tests to validate real-time behavior
+- Benchmarking against other libraries
+
+Currently missing:
+
+- Some features are still undocumented e.g. defining your own decodable type or handling errors.
+
+### 🔎 Details
+
+#### 🚀 Features
+
+- f7d34c2 Add `SessionFileSink`
+- 347a773 Add `ContinuousFileSink`
+- 9e13775 🚨 Introduce `StreamSink` as the shared engine behind every sink
+
+#### 🧰 Tasks
+
+- bae5053 Add log files to `.gitignore`
+
+#### 🛠  Build
+
+- 958b167 Bump `toolchain` to `1.97`
+
+#### 📝 Documentation
+
+- c9b606c Fix flaky assertion in formatter example
+- 0d1564e Fix broken link to `Core concepts` in `Quick start`
+- 5b6c62f Add ADRs for previous sink extension
+- 4b0168b Add usage examples about sinks
+
+### 👥 Contributors
+
+We'd like to thank the following people for their contributions:
+
+- Dwayne Steinke
+
 ## 0.2.0 (2026-05-28)
 
 ### ✨ Highlights
