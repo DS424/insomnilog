@@ -19,6 +19,7 @@ doc:
 
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
 
 sanitize: realtime-sanitize thread-sanitize address-sanitize miri
 
