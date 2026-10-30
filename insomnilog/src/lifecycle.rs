@@ -9,7 +9,7 @@ use crate::level::LogLevel;
 use crate::logger::Logger;
 use crate::sink::Sink;
 
-/// Panic message produced by [`get_sink`] / [`create_sink`] (and the
+/// Panic message produced by [`get_sink`] / [`register_sink`] (and the
 /// macros, in later steps) when called before [`start`].
 const NOT_STARTED_PANIC: &str = "insomnilog: call insomnilog::start() before using the logger";
 

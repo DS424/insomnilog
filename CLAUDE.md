@@ -73,8 +73,8 @@ Lints are strict: `pedantic`, `nursery`, `cargo`, `missing_docs`,
 
 - Use `#[expect(clippy::lint_name, reason = "…")]` rather than `#[allow]` —
   the compiler warns if the suppression becomes unnecessary.
-- The `_`-prefixed items in `lib.rs` (`_RecordHeader`, `_Producer`, etc.) are
-  macro helpers; they are `#[doc(hidden)]` intentionally.
+- Macro helpers live in `macros_internal`, re-exported from `lib.rs`; the
+  module is `#[doc(hidden)]` and semver-exempt intentionally.
 
 ## Adding a new loggable type
 

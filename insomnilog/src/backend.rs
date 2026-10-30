@@ -41,7 +41,7 @@ impl std::fmt::Display for LoggerAlreadyRegistered {
 
 impl std::error::Error for LoggerAlreadyRegistered {}
 
-/// Error returned by `create_sink` when a sink is already registered under
+/// Error returned by `register_sink` when a sink is already registered under
 /// the given name.
 pub struct SinkAlreadyRegistered {
     /// The sink that was registered under the name before this call.
