@@ -42,8 +42,8 @@ pub fn ensure_producer_registered() {
 ///
 /// On the first invocation from a given thread, the thread is lazily
 /// registered with the backend by calling
-/// [`Backend::register_producer`][crate::backend::Backend::register_producer]
-/// and the resulting [`ProducerHandle`] is stored in [`TL_PRODUCER`].
+/// [`Backend::create_producer`][crate::backend::Backend::create_producer]
+/// and the resulting [`PerThreadProducer`] is stored in [`TL_PRODUCER`].
 /// Subsequent calls from the same thread reuse the cached handle with no
 /// synchronisation.
 ///
@@ -52,7 +52,7 @@ pub fn ensure_producer_registered() {
 /// - Panics with `"insomnilog: call insomnilog::start() before using the
 ///   logger"` if [`crate::start`] has not been called.
 /// - Panics with the re-entrancy message from
-///   [`Backend::register_producer`][crate::backend::Backend::register_producer]
+///   [`Backend::create_producer`][crate::backend::Backend::create_producer]
 ///   if called from the backend worker thread itself.
 pub fn with_producer<R>(f: impl FnOnce(&mut Producer) -> R) -> R {
     ensure_producer_registered();
