@@ -15,6 +15,8 @@ repository = "https://github.com/DS424/insomnilog"
 [workspace.lints.rust]
 missing_docs = "warn"
 dead_code = "allow"
+unnameable_types = "warn"
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -28,6 +30,7 @@ missing_errors_doc = "warn"
 missing_safety_doc = "warn"
 empty_line_after_outer_attr = "warn"
 empty_line_after_doc_comments = "warn"
+redundant_pub_crate = "allow" # conflicts with rustc `unreachable_pub`
 
 [patch.crates-io]
 insomnilog = { path = "insomnilog" }

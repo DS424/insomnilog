@@ -26,6 +26,7 @@ mod sink;
 pub(crate) mod testutil;
 
 pub use backend::{BackendOptions, LoggerAlreadyRegistered, SinkAlreadyRegistered};
+pub use decode::{DecodedArg, LogRecord};
 pub use encode::{CustomEncode, Decoder};
 pub use formatter::{Formatter, InvalidPatternError, PatternFormatter};
 pub use level::LogLevel;
@@ -34,7 +35,10 @@ pub use lifecycle::{
     register_sink, shutdown, start,
 };
 pub use logger::Logger;
-pub use sink::{ConsoleSink, ContinuousFileSink, NullSink, SessionFileSink, Sink, StreamSink};
+pub use metadata::LogMetadata;
+pub use sink::{
+    ConsoleSink, ContinuousFileSink, NullSink, SessionFileSink, Sink, SinkError, StreamSink,
+};
 
 // `#[macro_export]` macros reference `$crate::macros_internal`; re-export it
 // here so the path resolves at the crate root.

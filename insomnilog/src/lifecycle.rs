@@ -95,7 +95,7 @@ pub fn start(options: backend::BackendOptions) -> Result<ShutdownGuard, AlreadyS
 /// # Panics
 ///
 /// Panics if [`start`] has not been called in this process.
-pub fn get_backend() -> &'static backend::Backend {
+pub(crate) fn get_backend() -> &'static backend::Backend {
     BACKEND.get().expect(NOT_STARTED_PANIC)
 }
 

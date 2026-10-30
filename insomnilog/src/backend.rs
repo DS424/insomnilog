@@ -96,7 +96,7 @@ impl Default for BackendOptions {
 
 /// Process-wide backend. Created once by [`crate::start`] and stored in a
 /// crate-level `OnceLock`.
-pub struct Backend {
+pub(crate) struct Backend {
     /// Configuration this backend was started with.
     options: BackendOptions,
     /// Named registry of sinks. Holds strong `Arc<dyn Sink>` for the process
@@ -134,7 +134,7 @@ impl Backend {
     /// Panics if `thread::Builder::spawn` fails (e.g. the OS refuses to
     /// create a new thread). The backend is unusable without its worker, so
     /// failing fast is the only sensible response.
-    pub fn start(options: BackendOptions) -> Self {
+    pub(crate) fn start(options: BackendOptions) -> Self {
         let runner = Arc::new(BackendRunner::new(
             options.idle_yield_rounds,
             options.idle_sleep,
@@ -173,7 +173,7 @@ impl Backend {
     /// One `Arc::clone` per call (atomic refcount bump); no `Weak::upgrade`,
     /// no branch for dead entries — registered sinks live for the process
     /// lifetime.
-    pub fn get_sink(&self, name: &str) -> Option<Arc<dyn Sink>> {
+    pub(crate) fn get_sink(&self, name: &str) -> Option<Arc<dyn Sink>> {
         self.sinks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -190,7 +190,7 @@ impl Backend {
     /// The write lock is held across the lookup-and-insert, so concurrent
     /// callers with the same `name` are serialized: exactly one wins and the
     /// rest receive `Err`.
-    pub fn register_sink(
+    pub(crate) fn register_sink(
         &self,
         name: &str,
         sink: Arc<dyn Sink>,
@@ -207,7 +207,7 @@ impl Backend {
     }
 
     /// Returns the logger registered under `name`, if any.
-    pub fn get_logger(&self, name: &str) -> Option<Arc<Logger>> {
+    pub(crate) fn get_logger(&self, name: &str) -> Option<Arc<Logger>> {
         self.loggers
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -223,7 +223,7 @@ impl Backend {
     ///
     /// Concurrent callers with the same `name` are serialized: exactly one wins and the
     /// rest receive `Err`.
-    pub fn create_logger(
+    pub(crate) fn create_logger(
         &self,
         name: &str,
         sinks: Vec<Arc<dyn Sink>>,
@@ -246,7 +246,7 @@ impl Backend {
     ///
     /// Prints a summary to stderr if any sink errors were recorded during
     /// this session.
-    pub fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         self.runner.shutdown_flag.store(true, Ordering::Release);
         let handle = self
             .worker

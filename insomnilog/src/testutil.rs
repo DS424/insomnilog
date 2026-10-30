@@ -10,13 +10,13 @@ use crate::level::LogLevel;
 use crate::sink::{Sink, SinkError};
 
 /// RGB colour — exercises a three-byte custom payload.
-pub struct Color {
+pub(crate) struct Color {
     /// Red channel.
-    pub r: u8,
+    pub(crate) r: u8,
     /// Green channel.
-    pub g: u8,
+    pub(crate) g: u8,
     /// Blue channel.
-    pub b: u8,
+    pub(crate) b: u8,
 }
 
 unsafe impl CustomEncode for Color {
@@ -41,11 +41,11 @@ unsafe impl CustomEncode for Color {
 }
 
 /// 2-D point — exercises an eight-byte custom payload.
-pub struct Point2D {
+pub(crate) struct Point2D {
     /// X coordinate.
-    pub x: f32,
+    pub(crate) x: f32,
     /// Y coordinate.
-    pub y: f32,
+    pub(crate) y: f32,
 }
 
 unsafe impl CustomEncode for Point2D {
@@ -74,7 +74,7 @@ unsafe impl CustomEncode for Point2D {
 
 /// Zero-payload custom type — exercises the degenerate
 /// `payload_size() == 0` path through the blanket `Encode` impl.
-pub struct Marker;
+pub(crate) struct Marker;
 
 unsafe impl CustomEncode for Marker {
     fn payload_size(&self) -> usize {
@@ -89,7 +89,7 @@ unsafe impl CustomEncode for Marker {
 }
 
 /// Spins calling `pred` until it returns `true` or `timeout` elapses.
-pub fn spin_until(pred: impl Fn() -> bool, timeout: Duration) -> bool {
+pub(crate) fn spin_until(pred: impl Fn() -> bool, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if pred() {
@@ -101,7 +101,7 @@ pub fn spin_until(pred: impl Fn() -> bool, timeout: Duration) -> bool {
 }
 
 /// A [`Sink`] that counts every record it receives, for use in tests.
-pub struct RecordingSink {
+pub(crate) struct RecordingSink {
     level: LogLevel,
     count: AtomicUsize,
 }
@@ -109,7 +109,7 @@ pub struct RecordingSink {
 impl RecordingSink {
     /// Creates a new sink that accepts records at or above `level`.
     #[must_use]
-    pub const fn new(level: LogLevel) -> Self {
+    pub(crate) const fn new(level: LogLevel) -> Self {
         Self {
             level,
             count: AtomicUsize::new(0),
@@ -117,7 +117,7 @@ impl RecordingSink {
     }
 
     /// Returns the number of records received so far.
-    pub fn record_count(&self) -> usize {
+    pub(crate) fn record_count(&self) -> usize {
         self.count.load(Ordering::Acquire)
     }
 }

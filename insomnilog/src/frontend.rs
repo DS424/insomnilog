@@ -29,7 +29,7 @@ thread_local! {
 ///
 /// - Panics if [`crate::start`] has not been called.
 /// - Panics if called from the backend worker thread (re-entrancy guard).
-pub fn ensure_producer_registered() {
+pub(crate) fn ensure_producer_registered() {
     TL_PRODUCER.with(|cell| {
         let mut borrow = cell.borrow_mut();
         if borrow.is_none() {
@@ -54,7 +54,7 @@ pub fn ensure_producer_registered() {
 /// - Panics with the re-entrancy message from
 ///   [`Backend::create_producer`][crate::backend::Backend::create_producer]
 ///   if called from the backend worker thread itself.
-pub fn with_producer<R>(f: impl FnOnce(&mut Producer) -> R) -> R {
+pub(crate) fn with_producer<R>(f: impl FnOnce(&mut Producer) -> R) -> R {
     ensure_producer_registered();
     TL_PRODUCER.with(|cell| {
         // `unwrap` is infallible: `ensure_producer_registered` guarantees `Some`.

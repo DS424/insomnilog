@@ -34,23 +34,23 @@ const MAX_BATCH_PER_CONSUMER: usize = 32;
 /// counters are [`AtomicU64`], the consumer registry is behind a [`Mutex`],
 /// and the shutdown signal is an [`AtomicBool`]. No wrapper mutex around
 /// `BackendRunner` as a whole is needed.
-pub struct BackendRunner {
+pub(crate) struct BackendRunner {
     /// Set to `true` by `Backend::shutdown`. The worker observes this with an
     /// `Acquire` load and exits once the flag transitions to `true`.
-    pub shutdown_flag: AtomicBool,
+    pub(crate) shutdown_flag: AtomicBool,
     /// Per-thread SPSC consumers. `Backend::create_producer` appends one entry
     /// here each time a new producer thread is registered; the worker snapshots
     /// the vec under a brief lock so sink dispatch does not block producers.
-    pub consumers: Mutex<Vec<Arc<PerThreadConsumer>>>,
+    pub(crate) consumers: Mutex<Vec<Arc<PerThreadConsumer>>>,
     /// Total [`crate::sink::Sink::write_record`] calls that returned `Err`.
-    pub write_errors: AtomicU64,
+    pub(crate) write_errors: AtomicU64,
     /// Total [`crate::sink::Sink::flush`] calls that returned `Err`.
-    pub flush_errors: AtomicU64,
+    pub(crate) flush_errors: AtomicU64,
     /// Total unwound panics caught by the per-record `catch_unwind`.
-    pub panic_count: AtomicU64,
+    pub(crate) panic_count: AtomicU64,
     /// Total log records dropped because the producer queue was full or the
     /// encoded record was larger than the queue capacity.
-    pub dropped_records: AtomicU64,
+    pub(crate) dropped_records: AtomicU64,
     /// Consecutive empty-poll loops that each call `yield_now` before
     /// escalating to [`Self::idle_sleep`].
     idle_yield_rounds: u32,
@@ -66,7 +66,11 @@ impl BackendRunner {
     ///
     /// The runner does not start any thread; call [`Self::run`] from a spawned
     /// thread to begin processing.
-    pub const fn new(idle_yield_rounds: u32, idle_sleep: Duration, wait_for_drain: bool) -> Self {
+    pub(crate) const fn new(
+        idle_yield_rounds: u32,
+        idle_sleep: Duration,
+        wait_for_drain: bool,
+    ) -> Self {
         Self {
             shutdown_flag: AtomicBool::new(false),
             consumers: Mutex::new(Vec::new()),
@@ -220,7 +224,7 @@ impl BackendRunner {
     ///
     /// Returns once `shutdown_flag` is `true` and — when `wait_for_drain` is
     /// also `true` — every consumer queue is fully empty.
-    pub fn run(&self) {
+    pub(crate) fn run(&self) {
         let mut idle_streak: u32 = 0;
         loop {
             let shutting_down = self.shutdown_flag.load(Ordering::Acquire);

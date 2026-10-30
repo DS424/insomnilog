@@ -17,7 +17,7 @@ use crate::queue::{Consumer, Producer};
 /// Holds the consumer half of the per-thread SPSC queue and the shared
 /// `alive` flag. The backend creates one `PerThreadConsumer` per registered
 /// logging thread via [`new`].
-pub struct PerThreadConsumer {
+pub(crate) struct PerThreadConsumer {
     /// Consumer half of the per-thread SPSC queue, behind a `Mutex` so that
     /// `Arc<PerThreadConsumer>` can be shared with the worker loop. The Mutex is
     /// always uncontended in practice: only the worker thread reads from it.
@@ -40,7 +40,7 @@ pub struct PerThreadConsumer {
 /// written by the thread that created it; moving it to another thread would
 /// violate that contract. The `PhantomData<*mut ()>` field opts the type out
 /// of `Send` (raw pointers are `!Send` by definition).
-pub struct PerThreadProducer {
+pub(crate) struct PerThreadProducer {
     /// Producer half of the per-thread SPSC queue.
     pub(crate) producer: Producer,
     /// Shared liveness flag. Cleared to `false` in [`Drop::drop`].
@@ -61,7 +61,7 @@ impl Drop for PerThreadProducer {
 ///
 /// Both halves share the same `Arc<AtomicBool>` liveness flag, which starts
 /// as `true` and is cleared to `false` when the [`PerThreadProducer`] is dropped.
-pub fn new(capacity: usize) -> (PerThreadProducer, PerThreadConsumer) {
+pub(crate) fn new(capacity: usize) -> (PerThreadProducer, PerThreadConsumer) {
     let (producer, consumer) = crate::queue::new(capacity);
     let alive = Arc::new(AtomicBool::new(true));
     let pt_producer = PerThreadProducer {
