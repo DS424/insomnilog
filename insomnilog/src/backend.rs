@@ -773,7 +773,7 @@ mod tests {
         backend.shutdown();
 
         let err =
-            result.expect_err("register_producer must panic when called from the worker thread");
+            result.expect_err("create_producer must panic when called from the worker thread");
         let msg = err
             .downcast_ref::<String>()
             .map(String::as_str)

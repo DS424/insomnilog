@@ -2,8 +2,9 @@
 //!
 //! A [`Logger`] is constructed via
 //! `crate::create_logger` and returned to callers
-//! as `Arc<Logger>`. The backend's `LoggerRegistry` holds the authoritative
-//! strong reference for the process lifetime, so any `*const Logger` written
+//! as `Arc<Logger>`. The backend's logger registry
+//! holds the authoritative strong reference for the process lifetime, so any
+//! `*const Logger` written
 //! into a record header remains valid for the duration the record
 //! may be read by the worker.
 //!
@@ -58,7 +59,7 @@ impl Logger {
     ///
     /// Visible only inside the crate: the only construction path exposed to
     /// users is [`crate::create_logger`], which routes through the
-    /// `LoggerRegistry`. Going around the registry would defeat the
+    /// backend's logger registry. Going around the registry would defeat the
     /// raw-pointer-in-record-header dispatch model.
     pub(crate) fn new(name: String, sinks: Vec<Arc<dyn Sink>>, level: LogLevel) -> Self {
         Self {

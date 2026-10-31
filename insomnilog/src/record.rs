@@ -6,8 +6,8 @@ use core::ptr;
 ///
 /// `logger_ptr` carries the per-record logger identity so the backend can fan
 /// out to the right `Sink` list without consulting any registry on the
-/// dispatch path. Lifetime safety comes from the `LoggerRegistry` holding a
-/// strong `Arc<Logger>` for the process lifetime.
+/// dispatch path. Lifetime safety comes from the backend's logger registry
+/// holding a strong `Arc<Logger>` for the process lifetime.
 #[repr(C)]
 pub struct RecordHeader {
     /// Nanoseconds since UNIX epoch.
