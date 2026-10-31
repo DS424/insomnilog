@@ -14,7 +14,7 @@ use super::record::RecordHeader;
 
 /// Error returned when decoding a binary log record fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodeError {
+pub(crate) enum DecodeError {
     /// The byte slice was too short to contain a complete field.
     BufferTooShort,
     /// The type-tag byte did not match any known [`TypeTag`].
@@ -27,6 +27,7 @@ pub enum DecodeError {
 
 /// A single decoded argument from the binary stream.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum DecodedArg {
     /// Decoded `i8`.
     I8(i8),
@@ -185,17 +186,17 @@ fn decode_custom(data: &[u8]) -> Result<(DecodedArg, usize), DecodeError> {
 ///
 /// Since Sinks use some kind of record in their interface, two record types have to be used
 /// to avoid a circular dependency. The `logger_ptr` contains the sink and can not be cast directly.
-pub struct RawDecodedRecord {
+pub(crate) struct RawDecodedRecord {
     /// Timestamp in nanoseconds since UNIX epoch.
-    pub timestamp_ns: u64,
+    pub(crate) timestamp_ns: u64,
     /// Raw `*const Logger` from the record header. The backend dereferences
     /// this to look up the logger name and sink list; it is never exposed to
     /// sinks because they cannot safely dereference it (circular dependency).
-    pub logger_ptr: usize,
+    pub(crate) logger_ptr: usize,
     /// Reference to the static callsite metadata.
-    pub metadata: &'static LogMetadata,
+    pub(crate) metadata: &'static LogMetadata,
     /// The decoded argument values.
-    pub args: Vec<DecodedArg>,
+    pub(crate) args: Vec<DecodedArg>,
 }
 
 /// A fully decoded, enriched log record ready for sink dispatch.
@@ -231,7 +232,7 @@ pub struct LogRecord {
 /// The `metadata_ptr` field in the header must be a valid pointer to a
 /// `&'static LogMetadata`.
 #[cfg_attr(feature = "rtsan", rtsan_standalone::blocking)]
-pub unsafe fn decode_record(data: &[u8]) -> Result<RawDecodedRecord, DecodeError> {
+pub(crate) unsafe fn decode_record(data: &[u8]) -> Result<RawDecodedRecord, DecodeError> {
     if data.len() < RecordHeader::SIZE {
         return Err(DecodeError::BufferTooShort);
     }

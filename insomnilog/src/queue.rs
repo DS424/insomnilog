@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 /// Errors returned by [`Producer::write`].
 #[derive(Debug)]
-pub enum WriteError {
+pub(crate) enum WriteError {
     /// The requested size exceeds the queue capacity.
     OversizedWrite,
     /// The queue is currently full.
@@ -80,10 +80,7 @@ struct QueueInner {
 unsafe impl Sync for QueueInner {}
 
 /// Producer half of the SPSC queue (used by a logging thread).
-///
-/// This type is public for macro expansion but is not part of the stable API.
-#[doc(hidden)]
-pub struct Producer {
+pub(crate) struct Producer {
     /// Shared queue state.
     inner: Arc<QueueInner>,
     /// Cached read position (avoids frequent atomic loads from consumer).
@@ -93,7 +90,7 @@ pub struct Producer {
 }
 
 /// Consumer half of the SPSC queue (used by the backend worker).
-pub struct Consumer {
+pub(crate) struct Consumer {
     /// Shared queue state.
     inner: Arc<QueueInner>,
     /// Cached write position (avoids frequent atomic loads from producer).
@@ -123,7 +120,7 @@ unsafe impl Send for Consumer {}
 ///
 /// Panics if `capacity` is 0 or if rounding up overflows `usize`.
 #[must_use]
-pub fn new(capacity: usize) -> (Producer, Consumer) {
+pub(crate) fn new(capacity: usize) -> (Producer, Consumer) {
     assert!(capacity > 0, "queue capacity must be > 0");
     let capacity = capacity.next_power_of_two();
     // Allocate 2× capacity so every write is physically contiguous.
@@ -161,7 +158,7 @@ impl Producer {
     /// Returns [`WriteError::OversizedWrite`] if `n > capacity`, or
     /// [`WriteError::QueueFull`] if there is not enough space right now.
     #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
-    pub fn write(&mut self, n: usize, f: impl FnOnce(&mut [u8])) -> Result<(), WriteError> {
+    pub(crate) fn write(&mut self, n: usize, f: impl FnOnce(&mut [u8])) -> Result<(), WriteError> {
         let Some(ptr) = self.try_reserve(n) else {
             return if n > self.inner.capacity {
                 Err(WriteError::OversizedWrite)
@@ -218,7 +215,7 @@ impl Producer {
 
 impl Consumer {
     /// Returns the number of bytes available for reading.
-    pub fn available(&mut self) -> usize {
+    pub(crate) fn available(&mut self) -> usize {
         if self.cached_write > self.read {
             return self.cached_write.wrapping_sub(self.read);
         }
@@ -252,7 +249,7 @@ impl Consumer {
     /// # Panics
     ///
     /// Panics in debug builds if `len` exceeds the number of available bytes.
-    pub fn peek(&mut self, len: usize) -> &[u8] {
+    pub(crate) fn peek(&mut self, len: usize) -> &[u8] {
         let avail = self.available();
         debug_assert!(
             len <= avail,
@@ -283,7 +280,7 @@ impl Consumer {
     /// # Panics
     ///
     /// Panics in debug builds if `len` exceeds the number of available bytes.
-    pub fn read<R>(&mut self, len: usize, f: impl FnOnce(&[u8]) -> R) -> R {
+    pub(crate) fn read<R>(&mut self, len: usize, f: impl FnOnce(&[u8]) -> R) -> R {
         let avail = self.available();
         debug_assert!(
             len <= avail,

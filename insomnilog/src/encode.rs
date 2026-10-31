@@ -12,6 +12,11 @@ use core::{fmt, ptr};
 /// Discriminant tag written before each encoded argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[expect(
+    unnameable_types,
+    reason = "keeps the safe `Encode` trait sealed; naming `TypeTag` would let \
+              downstream crates implement it and break its size contract"
+)]
 pub enum TypeTag {
     /// `i8` value (1 byte).
     I8 = 0,
