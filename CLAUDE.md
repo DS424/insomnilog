@@ -59,7 +59,7 @@ Each module usually only imports from modules earlier in this chain (plus `std`)
   stores `&METADATA as *const _ as usize`; `decode_record` casts it back.
   The static lifetime is guaranteed by the macro `static METADATA` expansion.
 - **`logger_ptr` is a valid `*const Logger` for the process lifetime.** The
-  `LoggerRegistry` holds a strong `Arc<Logger>`; the backend dereferences the
+  logger registry holds a strong `Arc<Logger>`; the backend dereferences the
   raw pointer without a lookup. Do not remove a logger from the registry.
 - **All records are contiguous in the ring buffer.** The queue is backed
   by a 2× capacity allocation, so any reservation of size `n ≤ capacity`
