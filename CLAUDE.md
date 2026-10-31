@@ -39,10 +39,11 @@ log_info!(logger, "…", args)
 
 ## Module dependency order
 
-`level` → `metadata` → `encode` → `record` → `decode` → `queue` → `formatter` → `sink`
-→ `backend` → `frontend` → `macros` → `lib`
+`level` → `metadata` → `encode` → `record` → `decode` → `queue` →
+`per_thread_queue` → `formatter` → `sink` → `logger` → `backend_runner` →
+`backend` → `lifecycle` → `frontend` → `macros` → `lib`
 
-Each module only imports from modules earlier in this chain (plus `std`).
+Each module usually only imports from modules earlier in this chain (plus `std`).
 `lib.rs` is the only place that ties them together.
 
 ## Key invariants — do not break
